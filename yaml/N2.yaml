@@ -1,0 +1,5 @@
+mg: 4.65186e-26
+gamma1: '@(T)7/5'
+gamma2: '@(T,prop)(prop.gamma1(T)+1)/(prop.gamma1(T)-1)'
+mu: '@(T,prop) 17.9e-6 .* ones(size(T))'
+k: '@(T,prop) 26.0e-3 .* ones(size(T))'

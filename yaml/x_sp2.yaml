@@ -1,0 +1,19 @@
+opts:
+  rho: default
+  cp: default
+  hv: default
+  abs: default
+  Em: default
+  M: default
+  pv: default
+  mv: default
+  propmodel: default
+Tg: 1730
+Pg: 101325
+Ti: 1730
+tlp: 1000
+tlm: 0
+l_laser: 1064
+dp0: 30
+sigma: 0
+F0: 30

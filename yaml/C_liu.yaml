@@ -1,0 +1,57 @@
+# Sensible energy properties. 
+M: 0.01201
+Tm: 1811
+Arho: 1
+Brho: -0.64985
+rho: "lambda self, T: self.Arho * 1900"
+Ccp: 1
+Dcp: 1
+cp: >-
+  lambda self, T: self.Ccp * 1000 * self.iif(T<1200, -9.7768e-4 + (2.7943e-4 * T) + (1.4554e-5 * T ** 2) - (3.4432e-8 * T ** 3) + (3.6700e-11 * T ** 4)-(1.9485e-14 * T ** 5) + (4.1802e-18 * T ** 6),2.9497e-1 + (2.9614e-3 * T)-(2.1232e-6 * T ** 2) + (8.1901e-10 * T ** 3)-(1.7516e-13 * T ** 4) + (1.9628e-17 * T ** 5)-(8.9817e-22 * T ** 6))
+
+# Conduction model.
+alpha: 0.37
+ct: 'lambda self: (8 * KB * self.Tg / (PI * self.mg)) ** (1./2)'
+
+# Parameters for sublimation model.
+c0: 17.179
+c1: 0.00068654
+c2: 0.0000029962
+c3: -8.5954e-10
+c4: 1.0486e-13
+b0: 205398
+b1: 736.6
+b2: -0.40713
+b3: 0.00011992
+b4: -1.7946e-8
+b5: 1.0717e-12
+a0: -122.96
+a1: 0.090558
+a2: -0.000027637
+a3: 4.1754e-9
+a4: -2.4875e-13
+
+# Sublimation model.
+alpham: 'lambda self, T: 0.77'
+Mv: 'lambda self, T: (self.c0 + self.c1 * T + self.c2 * T ** 2 + self.c3 * T ** 3 + self.c4 * T ** 4) / 1000'
+mv: 'lambda self, T: self.Mv(T) * 1.660538782e-24'
+Rs: 230.76497640854845
+Tb: 3901.365838587284
+hvb: 24.65456153696253
+Tcr: 9340
+n: 0.38
+hvA: 'lambda self: (self.hvb*1e6) / ((1-self.Tb/self.Tcr) ** self.n)'
+hv: >-
+  lambda self, T: (self.b0 + (self.b1 * T) + (self.b2 * T ** 2) + (self.b3 * T ** 3) + (self.b4 * T ** 4) + (self.b5 * T ** 5)) / (self.mv(T) / 1.660538782e-24)
+gamma0: 1.865
+Pref: 101325
+C: 24.57414309825269
+gamma: 'lambda self, dp, T: self.gamma0'
+pv: >-
+  lambda self, T, dp, hv: 101325 * np.exp(self.a0 + (self.a1 * T) + (self.a2 * T ** 2) + (self.a3 * T ** 3) + (self.a4 * T ** 4))
+
+# Absorption properties.
+CEmr: 1
+Emr: 'lambda self, l1, l2, dp: self.CEmr'
+Em: 'lambda self, l, dp, X: 0.38'
+Eml: 'lambda self, dp, X: self.Em(self.l_laser, dp, X)'

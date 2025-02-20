@@ -1,0 +1,4 @@
+gas: He
+mg: 6.64663e-27
+gamma1: 1.6666666666666667
+gamma2: '@(T,prop)(prop.gamma1+1)/(prop.gamma1-1)'

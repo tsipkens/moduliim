@@ -1,0 +1,3 @@
+mg: 4.8089207e-26  # for air
+gamma1: 'lambda self, T: 7/5'  # from N2
+gamma2: 'lambda self, T: (self.gamma1(T)+1)/(self.gamma1(T)-1)'
