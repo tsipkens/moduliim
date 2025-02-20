@@ -65,12 +65,13 @@ class HTModel:
         self._print_properties()
 
     def _print_properties(self):
-        print("HTModel > opts:")
+        print('\r' +'\033[32m' + 'HTModel > opts:' + '\033[0m')
         print(f"  Conduction:  {self.opts['cond']}")
         print(f"  Evaporation: {self.opts['evap']}")
         print(f"  Absorption:  {self.opts['abs']}" + (" (Gaussian)" if self.opts['abs'] == 'include' else ""))
         print(f"  Radiation:   {self.opts['rad']}")
         print(f"  Annealing:   {self.opts['ann']}")
+        print(' ')
 
 
     def evaluate(self, x: List[float]):
@@ -216,9 +217,9 @@ class HTModel:
         abs_option = self.opts.get('abs', 'none')
         if abs_option != 'none':
             if self.opts.get('ann', 'none') == 'none':
-                dTdt = dTdt + self.q_abs(prop, t, self.dp(mp, T))
+                dTdt = dTdt + self.q_abs(prop, t, self.dp(mp, T))[0]
             else:
-                dTdt = dTdt + self.q_abs(prop, t, self.dp(mp, T), X)
+                dTdt = dTdt + self.q_abs(prop, t, self.dp(mp, T), X)[0]
     
         # Annealing model
         ann_option = self.opts.get('ann', 'none')
@@ -230,7 +231,6 @@ class HTModel:
         # Finalize dTdt expression
         dTdt = dTdt / (prop.cp(T) * mp)
         return dTdt
-
 
     # Phase change/annealing component of the ODE.
     def dXdt(self, t, T, mp, X):
@@ -438,7 +438,7 @@ class HTModel:
 
         # Evaluate absorption cross-section
         Cabs = (np.pi**2 * dp**3 / (prop.l_laser * 1e-9) *
-                prop.Eml(dp * 1e9, X, prop))
+                prop.Eml(X, prop))
 
         # Define laser profile based on `htmodel.opts.abs`
         abs_option = htmodel.opts.get('abs', 'none')
@@ -479,11 +479,6 @@ class HTModel:
 
     def dXdt_fun(self, q_ann, prop, T, dp, X):
         # Placeholder for dXdt evaluation
-        pass
-
-    # Plotting functions
-    def sig_q(self, prop, T, dp, opts_rad):
-        # Placeholder for evaluating different modes at specified parameters
         pass
 
 
