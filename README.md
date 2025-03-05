@@ -20,6 +20,10 @@ This program is built to simulate signals from various materials, including soot
 
 This software is licensed under an GPL-3.0 license (see the corresponding file for details).
 
+### Related
+
+An alternate analysis software for LII with more of a focus on signal processing is available at: https://github.com/acuoci/LIISignals. 
+
 
 [SipkensThesis]:https://uwspace.uwaterloo.ca/handle/10012/13860
 
