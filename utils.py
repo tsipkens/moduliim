@@ -44,7 +44,9 @@ def plot_sweep(data, d, t):
 def add_noise(s, scale=1, gam=0):
     s = np.random.poisson(s * scale).astype(np.float32)
     s = s + np.random.normal(0, gam * np.ones_like(s))
-    return s
+    s = s / scale
+    sig = np.sqrt(np.maximum(gam ** 2 + s * scale, 0))
+    return s, sig
 
 
 def textdone():
