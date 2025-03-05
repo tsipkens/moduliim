@@ -16,6 +16,7 @@ prop = Prop(['yaml/air.yaml', 'yaml/C_liu.yaml'])
 prop.Tg = 300
 prop.Pg = 101325
 prop.Ti = 4100
+prop.tlp = 10
 
 t = np.linspace(0, 1000, 500)
 
