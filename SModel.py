@@ -56,9 +56,10 @@ class SModel:
         self._print_properties()
 
     def _print_properties(self):
-        print('SModel > opts:')
+        print('\r' +'\033[32m' + 'SModel > opts:' + '\033[0m')
         print(f"  Pyrometry: {self.opts['pyrometry']}")
         print(f"  Multicolor solver: {self.opts['multicolor_solver']}")
+        print(' ')
 
 
     def inverse(self, J):
