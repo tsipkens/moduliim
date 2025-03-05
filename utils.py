@@ -39,8 +39,16 @@ def plot_sweep(data, d, t):
     df = pd.melt(df, id_vars='t', var_name='d', value_name='T')
 
     sns.lineplot(df, x='t', y='T', hue='d', palette='rocket')
-    plt.show()
 
 
-def add_noise(s, scale=1):
-    return np.random.poisson(s * scale).astype(np.float32)
+def add_noise(s, scale=1, gam=0):
+    s = np.random.poisson(s * scale).astype(np.float32)
+    s = s + np.random.normal(0, gam * np.ones_like(s))
+    s = s / scale
+    sig = np.sqrt(np.maximum(gam ** 2 + s * scale, 0))
+    return s, sig
+
+
+def textdone():
+    print('\r' +'\033[32m' + '^ DONE!' + '\033[0m' + '\n')
+

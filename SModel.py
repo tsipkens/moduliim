@@ -56,9 +56,26 @@ class SModel:
         self._print_properties()
 
     def _print_properties(self):
-        print('SModel > opts:')
+        print('\r' +'\033[32m' + 'SModel > opts:' + '\033[0m')
         print(f"  Pyrometry: {self.opts['pyrometry']}")
         print(f"  Multicolor solver: {self.opts['multicolor_solver']}")
+        print(' ')
+
+
+    def inverse(self, J):
+        """
+        Use default method to evaluate inverse model, converting incandescence to temperature. 
+        """
+        if self.opts['pyrometry'] == 'ratio':
+            return self.pyrometry_ratio(J[:,:,0], J[:,:,1], Emr=None)  # uses Emr from prop
+        else:
+            return self.spectral_fit(J)
+        
+    def forward(self, T):
+        """
+        Use default method to evaluate forward model, converting temperature to incandescence. 
+        """
+        return self.blackbody(T.T, self.lam) / np.expand_dims(self.lam, [0,1])
 
 
     @staticmethod
@@ -131,7 +148,11 @@ class SModel:
             Emr = self.prop.Emr(l[0], l[1], self.prop.dp0)  # Ratio of Em at two wavelengths
 
         # Ratio of incandescence
-        Jr = J1 / J2
+        # Pre-allocation and only evaluate select (avoids error messages)
+        Jr = np.empty_like(J1)
+        Jr[:] = np.nan
+        isEval = np.logical_and(J1 > 0, J2 > 0)
+        Jr[isEval] = J1[isEval] / J2[isEval]
 
         # Basic ratio calculation
         PHI = 0.0143877696  # Planck's constant factor

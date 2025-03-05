@@ -5,6 +5,8 @@ from scipy.integrate import quad
 from scipy.stats import norm
 from scipy.integrate import solve_ivp
 
+import copy
+
 from typing import List, Callable, Dict, Any
 
 # Define constants.
@@ -48,7 +50,7 @@ class HTModel:
     opts: Dict[str, Any] = {}
 
     def __init__(self, prop, x=['dp0'], t=np.array([0]), **kwargs):
-        self.prop = prop
+        self.prop = copy.copy(prop)
         self.x = x if isinstance(x, list) else [x]
         self.t = t
         self.opts = {
@@ -65,21 +67,24 @@ class HTModel:
         self._print_properties()
 
     def _print_properties(self):
-        print("HTModel > opts:")
+        print('\r' +'\033[32m' + 'HTModel > opts:' + '\033[0m')
         print(f"  Conduction:  {self.opts['cond']}")
         print(f"  Evaporation: {self.opts['evap']}")
         print(f"  Absorption:  {self.opts['abs']}" + (" (Gaussian)" if self.opts['abs'] == 'include' else ""))
         print(f"  Radiation:   {self.opts['rad']}")
         print(f"  Annealing:   {self.opts['ann']}")
+        print(' ')
 
 
     def evaluate(self, x: List[float]):
         prop = self.prop
         for ii in range(len(self.x)):
             setattr(prop, self.x[ii], np.asarray(x[ii]))
-        return self.de_solve(prop, prop.dp0)
+        return self.de_solve(prop, np.array([prop.dp0]))
 
     def de_solve(self, prop, dp0, t=None):
+
+        self.prop = prop
 
         if t is None:
             t = self.t
@@ -129,12 +134,7 @@ class HTModel:
 
         # Solve the ODE
         if self.opts['deMethod'] in ['default', 'ode23s']:
-            if self.opts['abs'] == 'none':
-                opts = {}
-            else:
-                opts = {'max_step': 20 * prop.tlp}
-
-            sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, **opts)
+            sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, max_step=20*prop.tlp, method='Radau')
 
             Tout = np.maximum(sol.y[:Nd, :], prop.Tg)
             mpo = sol.y[Nd:2*Nd, :] / mass_conv
@@ -175,7 +175,7 @@ class HTModel:
             Xo = Xo[1:]
 
         dpo = ((6 * mpo) / (prop.rho(Tout) * np.pi)) ** (1 / 3) * 1e9  # calculate diameter over time
-        mpo = mpo / mpo[0]  # output relative change in particle mass over time
+        mpo = mpo / np.expand_dims(mpo[:,0], 1)  # output relative change in particle mass over time
 
         return Tout, dpo, mpo, Xo
 
@@ -216,21 +216,20 @@ class HTModel:
         abs_option = self.opts.get('abs', 'none')
         if abs_option != 'none':
             if self.opts.get('ann', 'none') == 'none':
-                dTdt = dTdt + self.q_abs(prop, t, self.dp(mp, T))
+                dTdt = dTdt + self.q_abs(prop, t, self.dp(mp, T))[0]
             else:
-                dTdt = dTdt + self.q_abs(prop, t, self.dp(mp, T), X)
+                dTdt = dTdt + self.q_abs(prop, t, self.dp(mp, T), X)[0]
     
         # Annealing model
         ann_option = self.opts.get('ann', 'none')
         if ann_option in ['include', 'michelsen']:
-            dTdt = dTdt + self.q_ann_mich(prop, T, self.dp(mp, T), X)
+            dTdt = dTdt + self.q_ann_mich(prop, T, self.dp(mp, T), X)[0]
         elif ann_option == 'sipkens':
-            dTdt = dTdt + self.q_ann_sip(prop, T, self.dp(mp, T), X)
+            dTdt = dTdt + self.q_ann_sip(prop, T, self.dp(mp, T), X)[0]
 
         # Finalize dTdt expression
         dTdt = dTdt / (prop.cp(T) * mp)
         return dTdt
-
 
     # Phase change/annealing component of the ODE.
     def dXdt(self, t, T, mp, X):
@@ -241,13 +240,9 @@ class HTModel:
         # Annealing model
         ann_option = self.opts.get('ann', 'none')
         if ann_option in ['include', 'michelsen']:
-            dXdt = dXdt_fun(
-                self.q_ann_mich, prop, T, dp(mp, T), X
-            )
+            dXdt = self.q_ann_mich(prop, T, self.dp(mp, T), X)[1]
         elif ann_option == 'sipkens':
-            dXdt = self.dXdt_fun(
-                self.q_ann_sip, prop, T, dp(mp, T), X
-            )
+            dXdt = self.q_ann_sip(prop, T, self.dp(mp, T), X)[1]
         else:
             dXdt = 0
 
@@ -390,7 +385,7 @@ class HTModel:
         pv = prop.pv(T, dp, hv)
         mv = prop.mv(T) if callable(prop.mv) else prop.mv
 
-        cv = np.sqrt(8 * KB * T / (np.pi * mv))  # Molecular speed [m/s]
+        cv = np.sqrt(np.maximum(8 * KB * T / (np.pi * mv), 0))  # Molecular speed [m/s], max(,0) prevents warnings
         nv = prop.alpham(T) * pv / (KB * T)  # Vapor number flux [m^-3]
 
         J = mv * nv * cv / 4 * np.pi * dp**2
@@ -438,7 +433,7 @@ class HTModel:
 
         # Evaluate absorption cross-section
         Cabs = (np.pi**2 * dp**3 / (prop.l_laser * 1e-9) *
-                prop.Eml(dp * 1e9, X, prop))
+                prop.Eml(dp, X))
 
         # Define laser profile based on `htmodel.opts.abs`
         abs_option = htmodel.opts.get('abs', 'none')
@@ -469,21 +464,73 @@ class HTModel:
         return q, Cabs, f
 
 
-    def q_ann_mich(self, prop, T, dp, X):
-        # Placeholder for Michelsen's annealing model evaluation
-        pass
+    def q_ann_mich(htmodel, prop, T, dp, X):
+        """
+        Implementation of annealing rate calculation from Michelsen (2003).
+        
+        Parameters:
+        htmodel : object (not used in this function but kept for compatibility)
+        prop : object, must contain attributes 'R', 'rho' (method), and 'M'
+        T : float, temperature in Kelvin
+        dp : float or np.array, particle diameter in nm
+        X : float or np.array, fraction of particle
+        
+        Returns:
+        q : float or np.array, annealing rate
+        dXdt : float or np.array, rate of change of fraction of particle
+        """
+        dp = dp * 1e-9  # Convert to meters (SI units)
+        Na = 6.0221409e23  # Avogadro's number
+        Np = (dp**3 * np.pi * prop.rho(T)) / (6 * prop.M) * Na  # number of atoms in nanoparticle
+        Xd = 0.01  # Initial defect density
+        
+        A_dis, E_dis = 1e18, 9.6e5
+        k_dis = A_dis * np.exp(-E_dis / (R * T))  # dissociation
+        A_int, E_int = 1e8, 8.3e4
+        k_int = A_int * np.exp(-E_int / (R * T))  # interstitial movement
+        A_vac, E_vac = 1.5e17, 6.7e5
+        k_vac = A_vac * np.exp(-E_vac / (R * T))  # vacancy movement
+        
+        DH_int, DH_vac = -1.9e4, -1.4e5  # Energy changes
+        Nd = (1 - X) * (Xd * Np)  # Number of defects
+        
+        q = -(DH_int * k_int + DH_vac * k_vac) * Nd / Na
+        dXdt = -1 / (Xd * Np) * (X * Np / 2 * k_dis - (k_int + k_vac) * Nd)
+        
+        return q, dXdt
 
-    def q_ann_sip(self, prop, T, dp, X):
-        # Placeholder for in-house annealing model evaluation
-        pass
 
-    def dXdt_fun(self, q_ann, prop, T, dp, X):
-        # Placeholder for dXdt evaluation
-        pass
-
-    # Plotting functions
-    def sig_q(self, prop, T, dp, opts_rad):
-        # Placeholder for evaluating different modes at specified parameters
-        pass
-
-
+    def q_ann_sip(htmodel, prop, T, dp, X):
+        """
+        Rate of annealing based on the simplified model of Sipkens (2019).
+        
+        Parameters:
+        htmodel : object (not used in this function but kept for compatibility)
+        prop : object, must contain attributes 'R', 'rho' (method), 'M', and optionally 'E', 'k0'
+        T : float, temperature in Kelvin
+        dp : float or np.array, particle diameter in nm
+        X : float or np.array, fraction of particle
+        
+        Returns:
+        q : float or np.array, rate of annealing
+        dXdt : float or np.array, rate of change of fraction of particle
+        """
+        dp = dp * 1e-9  # Convert to meters (SI units)
+        
+        # Set default values if 'E' and 'k0' are not attributes of prop
+        E = getattr(prop, 'E', 4e5)  # default: 5e5 from Newell, J. Appl. Polymer Sci., 1996
+        k0 = getattr(prop, 'k0', 3e-8 * 2e13 / 5)  # default: 4e12 form Michelsen et al., 2003 prev. 1e5
+        
+        k = k0 * np.exp(-E / (R * T))
+        
+        DH = 0  # multiply by percentage of defects existing
+        
+        # Compute rate of change of fraction of particle
+        X = np.maximum(X, 0.)  # bound X
+        X = np.maximum(X, 1.)
+        dXdt = 6 * (1 - X) ** (2/3) / dp * k
+        
+        # Compute annealing rate q
+        q = (DH * dXdt * dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)
+        
+        return q, dXdt
