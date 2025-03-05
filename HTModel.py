@@ -385,7 +385,7 @@ class HTModel:
         pv = prop.pv(T, dp, hv)
         mv = prop.mv(T) if callable(prop.mv) else prop.mv
 
-        cv = np.sqrt(8 * KB * T / (np.pi * mv))  # Molecular speed [m/s]
+        cv = np.sqrt(np.maximum(8 * KB * T / (np.pi * mv), 0))  # Molecular speed [m/s], max(,0) prevents warnings
         nv = prop.alpham(T) * pv / (KB * T)  # Vapor number flux [m^-3]
 
         J = mv * nv * cv / 4 * np.pi * dp**2
