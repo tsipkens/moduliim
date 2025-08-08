@@ -1,9 +1,9 @@
-# Sensible energy properties. 
+# Sensible energy properties.
 M: 0.01201
 Tm: 1811
 Arho: 1
 Brho: -0.64985
-rho: "lambda self, T: self.Arho * 1900"
+rho: 'lambda self, T: self.Arho * 1900'
 Ccp: 1
 Dcp: 1
 cp: >-
@@ -11,7 +11,6 @@ cp: >-
 
 # Conduction model.
 alpha: 0.37
-ct: 'lambda self: (8 * KB * self.Tg / (PI * self.mg)) ** (1./2)'
 
 # Parameters for sublimation model.
 c0: 17.179
