@@ -1,6 +1,8 @@
 import numpy as np
 import yaml
 
+import copy
+
 from types import MethodType
 
 from pprint import pprint
@@ -34,6 +36,18 @@ class Prop:
         prop = load_yaml(prop)  # load yaml file, returns dictionary
         for key in prop.keys():
             self.add(key, prop[key])
+
+    def copy(self):
+        return copy.copy(self)
+    
+    def __str__(self):
+        attributes = ""
+        for key, value in vars(self).items():
+            if not callable(value):
+                if key[-4:] == '_fun':
+                    key = key[:-4]  # remove _fun text
+                attributes += f"  \033[34m{key}\033[0m: {value}\n"
+        return f"Prop: {{\n{attributes}}}"
 
     def add(self, key, value):
         try:
