@@ -9,6 +9,8 @@ import copy
 
 from typing import List, Callable, Dict, Any
 
+from SModel import SModel  # e.g., for absorption
+
 # Define constants.
 H = 6.62606957e-34  # Planck"s constant [m^2.kg/s]
 C = 2.99792458e8    # Speed of light in a vacuum [m/s]
@@ -55,6 +57,7 @@ class HTModel:
         self.t = t
         self.opts = {
             'cond': 'free-molecular',  # Conduction model
+            'cond_sphere': 'primary',  # Heat transfer from equivalent sphere ('eq-sphere') or primary particle ('primary')
             'evap': 'free-molecular',  # Evaporation model
             'rad': 'none',  # Radiation model
             'abs': 'none',  # Absorption model
@@ -68,11 +71,11 @@ class HTModel:
 
     def _print_properties(self):
         print('\r' +'\033[32m' + 'HTModel > opts:' + '\033[0m')
-        print(f"  Conduction:  {self.opts['cond']}")
-        print(f"  Evaporation: {self.opts['evap']}")
-        print(f"  Absorption:  {self.opts['abs']}" + (" (Gaussian)" if self.opts['abs'] == 'include' else ""))
-        print(f"  Radiation:   {self.opts['rad']}")
-        print(f"  Annealing:   {self.opts['ann']}")
+        print(f" \033[34m Conduction\033[0m → {self.opts['cond']} (from {self.opts['cond_sphere']})")
+        print(f" \033[34m Evaporation\033[0m → {self.opts['evap']}")
+        print(f" \033[34m Absorption\033[0m → {self.opts['abs']}" + (" (Gaussian)" if self.opts['abs'] == 'include' else ""))
+        print(f" \033[34m Radiation\033[0m → {self.opts['rad']}")
+        print(f" \033[34m Annealing\033[0m → {self.opts['ann']}")
         print(' ')
 
 
@@ -82,12 +85,17 @@ class HTModel:
             setattr(prop, self.x[ii], np.asarray(x[ii]))
         return self.de_solve(prop, np.array([prop.dp0]))
 
-    def de_solve(self, prop, dp0, t=None):
-
-        self.prop = prop
-
-        if t is None:
-            t = self.t
+    def de_solve(self, prop=None, dp0=None, t=None):
+        
+        # If no t, then inherit from instance of class.
+        if t is None: t = self.t
+        
+        # If no prop, then inherit from instance of class.
+        if prop is None: prop = self.prop
+        else: self.prop = prop
+        
+        # Same for dp0.
+        if dp0 is None: dp0 = np.array([prop.dp0])
 
         Nd = len(dp0)  # number of size classes to consider in solver
 
@@ -102,7 +110,7 @@ class HTModel:
         mpi = (prop.rho0 * (dp0 * 1e-9) ** 3 * (np.pi / 6)) * mass_conv  # initial mass, [ag]
 
         if hasattr(prop, 'Xi'):
-            Xi = prop.Xi
+            Xi = np.asarray(prop.Xi)
         else:
             Xi = np.array([1])
 
@@ -133,8 +141,25 @@ class HTModel:
         yi = np.concatenate([Ti, mpi, Xi] if self.opts['ann'] != 'none' else [Ti, mpi])
 
         # Solve the ODE
-        if self.opts['deMethod'] in ['default', 'ode23s']:
-            sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, max_step=20*prop.tlp, method='Radau')
+        if self.opts['deMethod'] in ['default']:  # specifics of ODE solver call
+            
+            if self.opts['abs'] == 'none':  # then, generic call, without consideration of step size as gradual cooling
+                sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t)  # < NOTE: method='BDF' for stiff systems?
+
+            else:  # split interval to integrate differently over the laser pulse
+                t_split = 5 * prop.tlp + prop.tlm
+                t1 = np.concatenate((t[t <= t_split], [t_split]))
+                t2 = np.concatenate(([t_split], t[t > t_split]))
+
+                # Max. step size is included to ensure the solver sees the laser pulse, if absorption is included. 
+                sol1 = solve_ivp(dydt, (t1[0], t1[-1]), yi, t_eval=t1, max_step=0.1*prop.tlp)
+                sol2 = solve_ivp(dydt, (t2[0], t2[-1]), sol1.y[:,-1], t_eval=t2)
+
+                sol = sol1  # initialize sol, so right format
+                if t_split > t[-1]:  # if end of laser pulse is before the end of the time vector
+                    sol.y = sol1.y[:,:-1]
+                else:
+                    sol.y = np.hstack((sol1.y[:,:-1], sol2.y[:,1:]))
 
             Tout = np.maximum(sol.y[:Nd, :], prop.Tg)
             mpo = sol.y[Nd:2*Nd, :] / mass_conv
@@ -175,7 +200,7 @@ class HTModel:
             Xo = Xo[1:]
 
         dpo = ((6 * mpo) / (prop.rho(Tout) * np.pi)) ** (1 / 3) * 1e9  # calculate diameter over time
-        mpo = mpo / np.expand_dims(mpo[:,0], 1)  # output relative change in particle mass over time
+        # mpo = mpo / np.expand_dims(mpo[:,0], 1)  # output relative change in particle mass over time
 
         return Tout, dpo, mpo, Xo
 
@@ -198,7 +223,7 @@ class HTModel:
         prop = self.prop
         
         # Conduction model
-        if self.opts.get('cond', 'default') == 'free-molecular':
+        if self.opts.get('cond', 'default') != 'none':
             dTdt = dTdt - self.q_cond(prop, T, self.dp(mp, T))
 
         # Evaporation model
@@ -222,10 +247,8 @@ class HTModel:
     
         # Annealing model
         ann_option = self.opts.get('ann', 'none')
-        if ann_option in ['include', 'michelsen']:
-            dTdt = dTdt + self.q_ann_mich(prop, T, self.dp(mp, T), X)[0]
-        elif ann_option == 'sipkens':
-            dTdt = dTdt + self.q_ann_sip(prop, T, self.dp(mp, T), X)[0]
+        if ann_option != 'none':
+            dTdt = dTdt + self.q_ann(prop, T, t, self.dp(mp, T), X)[0]
 
         # Finalize dTdt expression
         dTdt = dTdt / (prop.cp(T) * mp)
@@ -234,23 +257,18 @@ class HTModel:
     # Phase change/annealing component of the ODE.
     def dXdt(self, t, T, mp, X):
         # Start building.
-        dXdt = np.zeros_like(t) * np.zeros_like(T) * np.zeros_like(mp) * np.zeros_like(X)
-        prop = self.prop
+        dXdt = np.zeros_like(t * T * mp * X)
 
-        # Annealing model
+        # Pass to annealing model.
         ann_option = self.opts.get('ann', 'none')
-        if ann_option in ['include', 'michelsen']:
-            dXdt = self.q_ann_mich(prop, T, self.dp(mp, T), X)[1]
-        elif ann_option == 'sipkens':
-            dXdt = self.q_ann_sip(prop, T, self.dp(mp, T), X)[1]
-        else:
-            dXdt = 0
+        if ann_option != 'none':
+            dXdt = self.q_ann(self.prop, T, t, self.dp(mp, T), X)[1]  # get second ouput
 
         return dXdt
 
 
     # Heat transfer submodels
-    def q_cond(self, prop, T, dp, opts_cond=None):
+    def q_cond(self, prop, T, dp, model=None, sphere=None):
         """
         Computes the rate of conduction energy loss from the nanoparticle.
 
@@ -259,47 +277,52 @@ class HTModel:
         - prop: Properties of the material and gas.
         - T: Vector of nanoparticle temperatures [K].
         - dp: Nanoparticle diameter [nm].
-        - opts_cond: Optional conduction model specification (default: self.opts['cond']).
+        - model: Optional conduction model specification (default: self.opts['cond']).
+        - sphere: Heat transfer from what sphere (default: self.opts['cond_sphere']).
 
         Returns:
         - q: Rate of conductive losses [W].
         - Kn: Knudsen number (optional).
         """
-        if opts_cond is None:
-            opts_cond = self.opts['cond']
+        if model is None:
+            model = self.opts['cond']
+
+        if sphere is None:
+            sphere = self.opts['cond_sphere']
 
         # Convert dp to meters for SI units
         dp = np.array(dp) * 1e-9
 
-        if opts_cond == 'free-molecular':
-            q = self.q_fm(prop, T, dp, prop.Tg)
+        # Convert to equivalent sphere of aggregate, if relevant.
+        if sphere == 'eq-sphere':
+            if hasattr(prop, 'Rg'):
+                Np = prop.kf * (prop.Rg * 1e-9 / (dp/2)) ** prop.Df
+            else:
+                Np = prop.Np
+            dp = dp * (Np / prop.fa) ** (1 / (2 * prop.eps_a))
 
-        elif opts_cond == 'continuum':
-            q = self.q_cont(prop, T, dp, prop.Tg)
+        # Evaluate the relevant model by calling subfunctions.
+        if model in {'free-molecular', 'fm'}:
+            q = self.qc_fm(prop, T, dp, prop.Tg)
 
-        elif opts_cond in {'transition', 'fuchs'}:
-            q = []
-            T = np.array(T)
-            if T.size == 1:
-                T = np.full_like(dp, T)
-            
-            for Ti, dpi in zip(T, dp):
-                def residual(T_delta):
-                    return self.q_fm(prop, Ti, dpi, T_delta) - self.q_cont(prop, T_delta, dpi + 2 * self.get_mfp(prop, T_delta), prop.Tg)
+        elif model == 'continuum':
+            q = self.qc_cont(prop, T, dp, prop.Tg)
 
-                T_delta = fsolve(residual, [prop.Tg, Ti])[0]
-                q.append(self.q_fm(prop, Ti, dpi, T_delta))
+        elif model in {'transition', 'fuchs'}:
+            q = self.qc_tr(prop, T, dp, prop.Tg)
 
-            q = np.array(q)
-
-        # Compute Knudsen number if requested
+        # Compute Knudsen number if requested as output.
         Kn = None
         if hasattr(prop, 'mu'):
             Kn = self.get_mfp(prop, T) / (dp / 2)
 
+        # Convert to equivalent sphere of aggregate, if relevant.
+        if sphere == 'eq-sphere':
+            q = q / Np  # convert back to a per primary rate
+
         return (q, Kn) if Kn is not None else q
 
-    def q_fm(self, prop, T, dp, Tg):
+    def qc_fm(self, prop, T, dp, Tg):
         """
         Free molecular conduction.
 
@@ -317,7 +340,7 @@ class HTModel:
             prop.gamma2(T) * (T - Tg))
         return q
 
-    def q_cont(self, prop, T, dp, Tg):
+    def qc_cont(self, prop, T, dp, Tg):
         """
         Continuum regime conduction.
 
@@ -330,11 +353,40 @@ class HTModel:
         Returns:
         - q: Rate of continuum conduction [W].
         """
-        def conductivity(T_local):
-            return prop.k(T_local)
+        def conductivity(T):
+            return prop.k(T)
 
         q = 2 * np.pi * dp * np.array([quad(conductivity, Tg, Ti)[0] for Ti in T])
         return q
+    
+    def qc_tr(self, prop, T, dp, Tg):
+        """
+        Transition regime conduction by Fuchs method.
+
+        Parameters:
+        - prop: Properties of the material and gas.
+        - T: Nanoparticle temperature [K].
+        - dp: Nanoparticle diameter [m].
+        - Tg: Gas temperature [K].
+
+        Returns:
+        - q: Rate of conduction [W].
+        """
+        q = []
+        T = np.array(T)
+        if T.size == 1:
+            T = np.full_like(dp, T)
+        
+        for Ti, dpi in zip(T, dp):
+            def residual(T_delta):
+                return self.q_fm(prop, Ti, dpi, T_delta) - self.q_cont(prop, T_delta, dpi + 2 * self.get_mfp(prop, T_delta), Tg)
+
+            T_delta = fsolve(residual, [Tg, Ti])[0]
+            q.append(self.q_fm(prop, Ti, dpi, T_delta))
+
+        q = np.array(q)
+        return q
+
 
     def get_mfp(self, prop, T):
         """
@@ -347,8 +399,14 @@ class HTModel:
         Returns:
         - lambda: Maxwell mean free path [m].
         """
-        rho = prop.mg * prop.Pg / (prop.kb * prop.Tg)
-        lambda_mfp = prop.mu(T) / (rho * np.sqrt(2 * prop.kb * prop.Tg / (np.pi * prop.mg)))
+        rho = prop.mg * prop.Pg / (KB * prop.Tg)
+
+        if hasattr(prop, 'mu'):
+            lambda_mfp = prop.mu(T) / (rho * np.sqrt(2 * KB * prop.Tg / (np.pi * prop.mg)))
+
+        else:  # McCoy and Cha
+            lambda_mfp = prop.k(T) / (prop.Pg * prop.f) * (prop.gamma1(T) - 1) / (rho * np.sqrt(2 * KB * prop.Tg / (np.pi * prop.mg)))
+
         return lambda_mfp
 
 
@@ -371,7 +429,7 @@ class HTModel:
         dp = np.array(dp) * 1e-9  # Convert dp to meters for SI units
         prop = self.prop
 
-        if not hasattr(prop, 'gamma'):
+        if hasattr(prop, 'gamma'):
             if prop.gamma is None:
                 prop.gamma = props.eq_tolman
 
@@ -405,7 +463,7 @@ class HTModel:
         # Placeholder for radiation evaluation
         pass
 
-    def q_abs(htmodel, prop, t, dp, X=None):
+    def q_abs(self, prop, t, dp, X=None):
         """
         Computes the rate of laser energy input into the nanoparticle.
 
@@ -432,11 +490,10 @@ class HTModel:
         F1 = prop.F0 * 100**2  # Convert laser fluence from J/cm² to J/m²
 
         # Evaluate absorption cross-section
-        Cabs = (np.pi**2 * dp**3 / (prop.l_laser * 1e-9) *
-                prop.Eml(dp, X))
+        Cabs = SModel.cabs(dp * 1e9, prop.l_laser, prop, X=X)  # < NOTE: could also add model as input here
 
-        # Define laser profile based on `htmodel.opts.abs`
-        abs_option = htmodel.opts.get('abs', 'none')
+        # Define laser profile based on `self.opts.abs`
+        abs_option = self.opts.get('abs', 'none')
         if abs_option in {'tophat', 'square'}:  # Square laser profile
             f = lambda t: F1 * (np.heaviside(t - (tlm - tlp / 2), 1) -
                                 np.heaviside(t - (tlm + tlp / 2), 1)) / tlp
@@ -454,6 +511,9 @@ class HTModel:
                 0.5 * f_s**2)
             f = lambda t: F1 * np.exp(-(np.log(t + np.exp(f_m)) - f_m)**2 / (2 * f_s**2)) / \
                 (t + np.exp(f_m)) / (np.sqrt(2 * np.pi) * f_s)
+            
+        elif abs_option == 'custom':
+            f = lambda t: prop.f(t) * F1  # expects function
 
         else:
             raise ValueError(f"Unknown laser profile option: {abs_option}")
@@ -464,7 +524,36 @@ class HTModel:
         return q, Cabs, f
 
 
-    def q_ann_mich(htmodel, prop, T, dp, X):
+    def q_ann(self, prop, T, t, dp, X):
+        """
+        Wrapper function for annealing rates.
+        
+        Parameters:
+        htmodel : object (not used in this function but kept for compatibility)
+        prop : object, must contain attributes 'R', 'rho' (method), and 'M'
+        T : float, temperature in Kelvin
+        dp : float or np.array, particle diameter in nm
+        X : float or np.array, fraction of particle
+        
+        Returns:
+        q : float or np.array, annealing rate
+        dXdt : float or np.array, rate of change of fraction of particle
+        """
+        dp = dp * 1e-9  # Convert to meters (SI units)
+
+        ann_option = self.opts.get('ann', 'none')
+        if ann_option in ['include', 'michelsen']:
+            q, dXdt = self.q_ann_mich(prop, T, dp, X)
+        elif ann_option == 'sipkens':
+            q, dXdt = self.q_ann_sip(prop, T, dp, X)
+        elif ann_option == 'photo':
+            q, dXdt = self.q_ann_photo(prop, T, t, dp, X)
+        else:
+            q, dXdt = 0, 0
+        
+        return q, dXdt
+
+    def q_ann_mich(self, prop, T, dp, X):
         """
         Implementation of annealing rate calculation from Michelsen (2003).
         
@@ -479,28 +568,33 @@ class HTModel:
         q : float or np.array, annealing rate
         dXdt : float or np.array, rate of change of fraction of particle
         """
-        dp = dp * 1e-9  # Convert to meters (SI units)
         Na = 6.0221409e23  # Avogadro's number
         Np = (dp**3 * np.pi * prop.rho(T)) / (6 * prop.M) * Na  # number of atoms in nanoparticle
         Xd = 0.01  # Initial defect density
         
+        def k_fun(A, E):
+            with np.errstate(over='ignore'):  # can overflow, that is okay
+                return A * np.exp(-E / (R * T))
+        
+        # Arrhenius for various transformations in the material.
         A_dis, E_dis = 1e18, 9.6e5
-        k_dis = A_dis * np.exp(-E_dis / (R * T))  # dissociation
+        k_dis = k_fun(A_dis, E_dis)  # dissociation
         A_int, E_int = 1e8, 8.3e4
-        k_int = A_int * np.exp(-E_int / (R * T))  # interstitial movement
+        k_int = k_fun(A_int, E_int)  # interstitial movement
         A_vac, E_vac = 1.5e17, 6.7e5
-        k_vac = A_vac * np.exp(-E_vac / (R * T))  # vacancy movement
+        k_vac = k_fun(A_vac, E_vac)  # vacancy movement
         
         DH_int, DH_vac = -1.9e4, -1.4e5  # Energy changes
         Nd = (1 - X) * (Xd * Np)  # Number of defects
         
         q = -(DH_int * k_int + DH_vac * k_vac) * Nd / Na
+
+        # Rearrange Eq. (38) and take derivative.
         dXdt = -1 / (Xd * Np) * (X * Np / 2 * k_dis - (k_int + k_vac) * Nd)
         
         return q, dXdt
 
-
-    def q_ann_sip(htmodel, prop, T, dp, X):
+    def q_ann_sip(self, prop, T, dp, X):
         """
         Rate of annealing based on the simplified model of Sipkens (2019).
         
@@ -515,20 +609,52 @@ class HTModel:
         q : float or np.array, rate of annealing
         dXdt : float or np.array, rate of change of fraction of particle
         """
-        dp = dp * 1e-9  # Convert to meters (SI units)
-        
         # Set default values if 'E' and 'k0' are not attributes of prop
         E = getattr(prop, 'E', 4e5)  # default: 5e5 from Newell, J. Appl. Polymer Sci., 1996
-        k0 = getattr(prop, 'k0', 3e-8 * 2e13 / 5)  # default: 4e12 form Michelsen et al., 2003 prev. 1e5
+        A0 = getattr(prop, 'A0', 1e5)  # default: 4e12 form Michelsen et al., 2003 prev. 1e5, changed again from 3e-8 * 2e13 / 5
         
-        k = k0 * np.exp(-E / (R * T))
+        dd_dt = 2 * A0 * np.exp(-E / (R * T))
         
         DH = 0  # multiply by percentage of defects existing
         
         # Compute rate of change of fraction of particle
         X = np.maximum(X, 0.)  # bound X
-        X = np.maximum(X, 1.)
-        dXdt = 6 * (1 - X) ** (2/3) / dp * k
+        X = np.minimum(X, 1.)
+        dXdt = 3 * (1 - X) ** (2/3) / dp * dd_dt
+        
+        # Compute annealing rate q
+        q = (DH * dXdt * dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)
+        
+        return q, dXdt
+
+    def q_ann_photo(self, prop, T, t, dp, X):
+        """
+        Rate of annealing including photoannealing.
+        
+        Parameters:
+        htmodel : object (not used in this function but kept for compatibility)
+        prop : object, must contain attributes 'R', 'rho' (method), 'M', and optionally 'E', 'k0'
+        T : float, temperature in Kelvin
+        dp : float or np.array, particle diameter in nm
+        X : float or np.array, fraction of particle
+        
+        Returns:
+        q : float or np.array, rate of annealing
+        dXdt : float or np.array, rate of change of fraction of particle
+        """
+        # Set default values if 'E' and 'k0' are not attributes of prop
+        t = np.array(t) * 1e-9  # Convert time to seconds
+        _, _, f = self.q_abs(prop, t, dp, X)
+        
+        dd_dt = 2 * prop.A0 * np.exp(-prop.E / (R * T)) + \
+            2 * prop.Apho * prop.Em(prop.l_laser, dp, X) * f(t) / (prop.l_laser * 1e-9)
+        
+        DH = 0  # multiply by percentage of defects existing
+        
+        # Compute rate of change of fraction of particle
+        X = np.maximum(X, 0.)  # bound X
+        X = np.minimum(X, 1.)
+        dXdt = 3 * (1 - X) ** (2/3) / dp * dd_dt
         
         # Compute annealing rate q
         q = (DH * dXdt * dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)
