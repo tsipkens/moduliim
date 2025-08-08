@@ -1,3 +1,13 @@
+
+main_x*.py
+main_w*.py
+archive/*
+out/*
+working/*
+data_local/*
+*temp*
+*.svg
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
