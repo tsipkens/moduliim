@@ -38,12 +38,12 @@ def plot_sweep(data, d, t, label='', cmap='rocket'):
     df = pd.DataFrame(data)  # Transpose to align columns with series
     df.columns = [f"{d[ii]}" for ii in range(len(d))]  # Name columns as "Series 1", "Series 2", ...
     df['t'] = t  # Add an index column
-    df = pd.melt(df, id_vars='t', var_name=label, value_name='T')
+    df = pd.melt(df, id_vars='t', var_name=label, value_name='y')
     
     # if type(cmap) != str:
     #     cmap = sns.color_palette([cmap(ii) for ii in np.linspace(0, 1, len(d))])
     
-    ax = sns.lineplot(df, x='t', y='T', hue=label, palette=cmap)
+    ax = sns.lineplot(df, x='t', y='y', hue=label, palette=cmap)
     if len(d) > 5:  # remove legend as too many items
         ax.legend_.remove()
 
@@ -73,7 +73,13 @@ def plot(x, y, c=None, cmap='rocket', usage=1.0, **kwargs):
 
 
 def add_noise(s, scale=1, gam=0):
-    s = np.random.poisson(s * scale).astype(np.float32)
+    s = s.astype(np.float32)  # convert to float32
+
+    # Add Poisson noise.
+    flag_large = s * scale > 1e3  # flag when Gaussian is appropriate  (avoid lam too large issues)
+    s[~flag_large] = np.random.poisson(s[~flag_large] * scale)  # for small values use Poisson noise
+    s[flag_large] = np.random.normal(s[flag_large] * scale, np.sqrt(s[flag_large] * scale))  # for large values, approx. as Gaussian
+    
     s = s + np.random.normal(0, gam * np.ones_like(s))
     s = s / scale
     sig = np.sqrt(np.maximum(gam ** 2 + s * scale, 0))
