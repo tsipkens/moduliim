@@ -10,47 +10,42 @@ import seaborn as sns
 from Prop import Prop
 from HTModel import HTModel
 from SModel import SModel
-import utils
+import tools
 
 prop = Prop(['yaml/air.yaml', 'yaml/C_liu.yaml'])
 prop.Tg = 300
 prop.Pg = 101325
 prop.Ti = 4100
 prop.tlp = 10
+prop.l_laser = 1064e-9
+
+prop.dp0 = 60
 
 t = np.linspace(0, 1000, 500)
 
 htm = HTModel(prop, ['dp0', 'alpha'], t=t) # , abs='include')
 
-
-# Evaluate temporal decays.
-# htm.dTdt(0, 3000, 0.1, 1)
-
-d = np.array([60])
-To, _, _, _ = htm.de_solve(prop, d)
-
+To, _, _, _ = htm.de_solve()
 
 # Spectroscopic model.
-prop.dp0 = 30
 sm = SModel(prop)
 
 J0 = 1e-1 * sm.forward(To)
-J, sig = utils.add_noise(J0, scale=0.0001, gam=1e-15)
+J, sig = tools.add_noise(J0, scale=1e-15, gam=1e-21)
 J[J < 1e2] = np.nan
 
 T1 = sm.inverse(J)
-# T1 = sm.pyrometry_ratio(J[:,:,0], J[:,:,1])
-# T2 = sm.spectral_fit(J)
-
-
+T1_pl = sm.inverse(J + sig)
+T1_mi = sm.inverse(J - sig)
 
 def fun(x):
-    # resid = np.squeeze(T1.T - htm.de_solve(prop, np.array([x[0]]))[0])
-    resid = np.squeeze(T1.T - htm.evaluate(x)[0])
+    resid = np.squeeze(T1 - htm.evaluate(x)[0])
     return resid[~np.isnan(resid)]
+
 x0 = 1.2 * np.array([60, prop.alpha])
 res = op.least_squares(fun, x0=x0)
 x1 = res['x']
+print(f'x1 = {x1}')
 
 Jac = res['jac']
 Gam = np.linalg.pinv(Jac.T @ Jac)
