@@ -5,6 +5,7 @@ archive/*
 out/*
 working/*
 data_local/*
+data_out/*
 *temp*
 *.svg
 
