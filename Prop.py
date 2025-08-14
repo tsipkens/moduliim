@@ -78,7 +78,10 @@ class Prop:
             v[key] = v[key + '_fun']  # move text over
             del v[key + '_fun']  # delete text
 
-        pprint(v)
+        print('\r' +'\033[32m' + 'Prop:' + '\033[0m')
+        for key, value in v.items():
+            print(f"  \033[34m{key}\033[0m → {value}")
+        print(' ')
 
 
     def iif(self, cond, a, b):
