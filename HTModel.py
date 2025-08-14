@@ -115,7 +115,7 @@ class HTModel:
             Xi = np.array([1])
 
         # Starting point exception
-        if t[0] > 0.1:  # allows for initial condition at t=0
+        if t[0] > 0.1:  # allows for initial condition at t=0 instead of first entry in time vector
             t = np.concatenate(([0], t))
             opts_tadd = 1
         else:
@@ -143,23 +143,7 @@ class HTModel:
         # Solve the ODE
         if self.opts['deMethod'] in ['default']:  # specifics of ODE solver call
             
-            if self.opts['abs'] == 'none':  # then, generic call, without consideration of step size as gradual cooling
-                sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t)  # < NOTE: method='BDF' for stiff systems?
-
-            else:  # split interval to integrate differently over the laser pulse
-                t_split = 5 * prop.tlp + prop.tlm
-                t1 = np.concatenate((t[t <= t_split], [t_split]))
-                t2 = np.concatenate(([t_split], t[t > t_split]))
-
-                # Max. step size is included to ensure the solver sees the laser pulse, if absorption is included. 
-                sol1 = solve_ivp(dydt, (t1[0], t1[-1]), yi, t_eval=t1, max_step=0.1*prop.tlp)
-                sol2 = solve_ivp(dydt, (t2[0], t2[-1]), sol1.y[:,-1], t_eval=t2)
-
-                sol = sol1  # initialize sol, so right format
-                if t_split > t[-1]:  # if end of laser pulse is before the end of the time vector
-                    sol.y = sol1.y[:,:-1]
-                else:
-                    sol.y = np.hstack((sol1.y[:,:-1], sol2.y[:,1:]))
+            sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='BDF')  # use BDF method as good for stiff ODEs
 
             Tout = np.maximum(sol.y[:Nd, :], prop.Tg)
             mpo = sol.y[Nd:2*Nd, :] / mass_conv
