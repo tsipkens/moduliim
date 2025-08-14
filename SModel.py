@@ -10,10 +10,11 @@ H = 6.62606957e-34  # Planck"s constant [m^2.kg/s]
 C = 2.99792458e8    # Speed of light in a vacuum [m/s]
 KB =  1.3806488e-23 # Boltzmann constant [m^2.kg/s^2/K]
 R = 8.3144621       # Universal gas constant [J/mol/K]
+PHI = H * C / KB    # Planck's constant factor
 
 class SModel:
     """
-    Class for the spectroscopic model and pyrometry calculations.
+    Class for the spectroscopic model, which enables pyrometry calculations.
 
     Parameters:
     -----------
@@ -43,10 +44,11 @@ class SModel:
 
         # Options for multicolor solver and pyrometry
         self.opts = {
-            "multicolor_solver": "default",  # Indicates which multicolor solver to use
-            "pyrometry": "ratio"  # Indicates how to handle pyrometry
+            'multicolor_solver': 'default',  # indicates which multicolor solver to use
+            'pyrometry': 'ratio',  # indicates how to handle pyrometry
+            'model': 'rdg-fa',  # default spectroscopic model (rdg-fa, Mie)
         }
-        self.opts.update(kwargs)  # Update with additional options if provided
+        self.opts.update(kwargs)  # update with additional options if provided
 
         # Scale Planck's law for stability (closer to 1).
         # Uses dp = 30 nm for data scaling.
@@ -57,8 +59,8 @@ class SModel:
 
     def _print_properties(self):
         print('\r' +'\033[32m' + 'SModel > opts:' + '\033[0m')
-        print(f"  Pyrometry: {self.opts['pyrometry']}")
-        print(f"  Multicolor solver: {self.opts['multicolor_solver']}")
+        for key, value in self.opts.items():
+            print(f"  \033[34m{key}\033[0m → {value}")
         print(' ')
 
 
@@ -67,16 +69,73 @@ class SModel:
         Use default method to evaluate inverse model, converting incandescence to temperature. 
         """
         if self.opts['pyrometry'] == 'ratio':
-            return self.pyrometry_ratio(J[:,:,0], J[:,:,1], Emr=None)  # uses Emr from prop
+            return self.pyrometry_ratio(J[:,:,0], J[:,:,1], Emr=None)[0]  # uses Emr from prop
         else:
             return self.spectral_fit(J)
         
-    def forward(self, T):
+    def forward(self, T, prop=None, dp0=None, X=None, mp=None):
         """
         Use default method to evaluate forward model, converting temperature to incandescence. 
         """
-        return self.blackbody(T.T, self.lam) / np.expand_dims(self.lam, [0,1])
+        if X is None:  # if no annealing, set to ones of same size as T
+            X = np.ones_like(T)
 
+        if prop is None:  # if no prop, inherit from class instance
+            prop = self.prop
+
+        if dp0 is None:  # if no size, inherit from prop
+            dp0 = prop.dp0
+
+        if mp is None:
+            mp = np.ones_like(T)  # if no mass, assume unit mass everywhere
+
+        mp = np.expand_dims(mp, [2])  # expand for lambda dimension
+        Cabs = self.cabs(dp0, self.lam, prop, self.opts['model'], np.expand_dims(X, [2]))
+        Ib = self.blackbody(T, self.lam)
+
+        return mp * Cabs * Ib
+
+
+    @staticmethod
+    def cabs(d, lam, prop, model='rdg-fa', X=None):
+        """
+        Calculate the absorption cross section.
+
+        Parameters:
+        -----------
+        d : ndarray
+            Particle diameter(s) in nm.
+        lam : ndarray
+            Wabelength(s) in nm.
+        prop : object
+            Material properties.
+        X : ndarray
+            Annealed fraction (optional)
+        """
+        if X is None:  # if no annealing, set to ones of same size as T
+            X = np.array([1])
+
+        # Evaluate cross section.
+        if 'rdg-fa' in model or 'rayleigh' in model:  # RDG-FA (volumetric), same as Rayleigh save for Npp
+            if hasattr(prop, 'm'):
+                Em = ((prop.m**2 - 1) / (prop.m**2 + 2)).imag
+            else:
+                Em = prop.Em(lam, d, X)
+            Cabs = np.pi ** 2 * (d * 1e-9) ** 3 / (lam * 1e-9) * Em
+
+        elif 'mie' in model:  # Mie absorption
+            import miepython as mie  # import mie library
+            qext, qsca, _, _ = mie.efficiencies(prop['m'], d, lam)
+            Cabs = (qext - qsca) * (np.pi * d ** 2 / 4)  # multiple eff. by cross section
+
+        else:
+            Cabs = None  # unsupported model
+
+        # Modify absorption using an AAE.
+        if 'aae' in model:
+            Cabs = Cabs * (lam / prop.lam_ref) ** (-prop.aae + 1)  # apply AAE scaling
+
+        return Cabs
 
     @staticmethod
     def blackbody(T, lam):
@@ -126,42 +185,39 @@ class SModel:
             Calculated temperature.
         Co : ndarray
             Scaling constant.
-        s_T : ndarray
-            Standard deviation of temperature.
-        out : dict
-            Additional outputs, including `s_C` (std of scaling constant) and `r_TC` (correlation).
         """
-        l = self.lam  # Local copy of wavelengths
+        lam = self.lam  # Local copy of wavelengths
 
         # Check the number of wavelengths
-        if len(l) > 2:
+        if len(lam) > 2:
             if idx is None:
                 raise ValueError(
                     "More than two wavelengths in SModel. Provide indices (idx) for pyrometry."
                 )
             if len(idx) != 2:
                 raise ValueError("Invalid indices: idx must have exactly two values.")
-            l = l[idx]
+            lam = lam[idx]
 
         # Handle Emr input
         if Emr is None:
-            Emr = self.prop.Emr(l[0], l[1], self.prop.dp0)  # Ratio of Em at two wavelengths
+            Emr = self.prop.Emr(lam[0], lam[1], self.prop.dp0)  # Ratio of Em at two wavelengths
 
         # Ratio of incandescence
         # Pre-allocation and only evaluate select (avoids error messages)
         Jr = np.empty_like(J1)
         Jr[:] = np.nan
-        isEval = np.logical_and(J1 > 0, J2 > 0)
+        isEval = np.logical_and(J1 > 0, J2 > 0)  # if both signals are non-zero
         Jr[isEval] = J1[isEval] / J2[isEval]
 
         # Basic ratio calculation
-        PHI = 0.0143877696  # Planck's constant factor
-        To = (PHI * (1 / (l[1] * 1e-9) - 1 / (l[0] * 1e-9))) / np.log(
-            Jr * ((l[0] / l[1])**6) / Emr
+        To = (PHI * (1 / (lam[1] * 1e-9) - 1 / (lam[0] * 1e-9))) / np.log(
+            Jr * ((lam[0] / lam[1])**6) / Emr
         )
-        To = np.real(To)  # Avoid imaginary values
 
-        return To
+        # Calculate scaling constant.
+        Co = J1 / (self.blackbody(To, lam[0])[:,:,0])  # not currently absolute scaling
+
+        return To, Co
     
 
     def spectral_fit(self, J):
@@ -185,7 +241,7 @@ class SModel:
             Additional output data (currently empty).
         """
         ntime, nshots, _ = J.shape
-        s = np.std(J, axis=1) / np.sqrt(J.shape[1])  # Standard error
+        s = np.std(J, axis=1) / np.sqrt(J.shape[1])  # standard error
         prop = self.prop
 
         # Ensure `C_J` exists in `prop`
@@ -196,7 +252,7 @@ class SModel:
         s_T = np.zeros((ntime, nshots))
         s_C = np.zeros((ntime, nshots))
 
-        T0 = self.pyrometry_ratio(J[:,:,0], J[:,:,1], Emr=None)
+        T0, _ = self.pyrometry_ratio(J[:,:,0], J[:,:,1], Emr=None)
 
         # Define the model based on options
         if self.opts['multicolor_solver'] == "default":
