@@ -21,7 +21,7 @@ def load_yaml(fns):
     if not type(fns) == list:
         fns = [fns]
 
-    prop = {}  # initialize empty distionary
+    prop = {}  # initialize empty dictionary
     for fn in fns:
         with open(fn) as stream:
             try:
@@ -32,22 +32,21 @@ def load_yaml(fns):
     return prop
 
 class Prop:
-    def __init__(self, prop):
-        prop = load_yaml(prop)  # load yaml file, returns dictionary
+    def __init__(self, fns=[]):
+        prop = load_yaml(fns)  # load yaml file, returns dictionary
+
+        # Import constants.
+        self.H = 6.62606957e-34  # Planck"s constant [m^2.kg/s]
+        self.C = 2.99792458e8    # Speed of light in a vacuum [m/s]
+        self.KB =  1.3806488e-23 # Boltzmann constant [m^2.kg/s^2/K]
+        self.R = 8.3144621       # Universal gas constant [J/mol/K]
+        self.PI = np.pi
+
         for key in prop.keys():
             self.add(key, prop[key])
 
     def copy(self):
         return copy.copy(self)
-    
-    def __str__(self):
-        attributes = ""
-        for key, value in vars(self).items():
-            if not callable(value):
-                if key[-4:] == '_fun':
-                    key = key[:-4]  # remove _fun text
-                attributes += f"  \033[34m{key}\033[0m: {value}\n"
-        return f"Prop: {{\n{attributes}}}"
 
     def add(self, key, value):
         try:
@@ -63,7 +62,8 @@ class Prop:
             else:
                 setattr(self, key, value)  # add value directly
 
-    def show(self):
+    # Override __repr__ so Jupyter uses it
+    def __repr__(self):
         v = vars(self).copy()
         keys = vars(self).keys()
         
@@ -78,10 +78,16 @@ class Prop:
             v[key] = v[key + '_fun']  # move text over
             del v[key + '_fun']  # delete text
 
-        print('\r' +'\033[32m' + 'Prop:' + '\033[0m')
+        lines = []
+        lines.append('\r' +'\033[32m' + 'Prop:' + '\033[0m')
         for key, value in v.items():
-            print(f"  \033[34m{key}\033[0m → {value}")
-        print(' ')
+            lines.append(f"  \033[34m{key}\033[0m → {value}")
+        lines.append(' ')
+
+        return "\n".join(lines)
+    
+    def show(self):
+        print(self.__repr__())
 
 
     def iif(self, cond, a, b):
