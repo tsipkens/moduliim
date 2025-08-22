@@ -210,7 +210,7 @@ class HTModel:
         
         # Conduction model
         if self.opts.get('cond', 'default') != 'none':
-            dTdt = dTdt - self.q_cond(prop, T, self.dp(mp, T))
+            dTdt = dTdt - self.q_cond(prop, T, self.dp(mp, T))[0]
 
         # Evaporation model
         evap_option = self.opts.get('evap', 'default')
@@ -235,7 +235,7 @@ class HTModel:
         ann_option = self.opts.get('ann', 'none')
         if ann_option != 'none':
             dTdt = dTdt + self.q_ann(prop, T, t, self.dp(mp, T), X)[0]
-
+        
         # Finalize dTdt expression
         dTdt = dTdt / (prop.cp(T) * mp)
         return dTdt
@@ -306,7 +306,7 @@ class HTModel:
         if sphere == 'eq-sphere':
             q = q / Np  # convert back to a per primary rate
 
-        return (q, Kn) if Kn is not None else q
+        return q, Kn
 
     def qc_fm(self, prop, T, dp, Tg):
         """

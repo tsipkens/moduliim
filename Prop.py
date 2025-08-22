@@ -95,8 +95,8 @@ class Prop:
         If function for writing inline conditional statements.
         AUTHOR: Timothy Sipkens, 2020-12-27
         """
-        a = np.asarray(a)
-        b = np.asarray(b)
+        a = np.asarray(a) * np.ones_like(cond)
+        b = np.asarray(b) * np.ones_like(cond)
         cond = np.asarray(cond)
         out = b
         out[cond] = a[cond]
@@ -113,7 +113,7 @@ class Prop:
         Evaluate the Kelvin equation.
         """
         pv0 = self.eq_claus_clap(T, dp, hv)  # Clausius-Clapeyron equation
-        return pv0 * np.exp((4 * self.gamma(dp, T, prop)) / \
+        return pv0 * np.exp((4 * self.gamma(dp, T)) / \
             (dp * self.rho(T) * self.Rs * T))  # Evaluate the Kelvin Eqn.
     
     def eq_antione(self, T, dp, hv):
@@ -128,8 +128,8 @@ class Prop:
         AUTHOR: Kyle Daun, 2020-12-17
         MODIFIED: Timothy Sipkens
         """
-        mu = (T<1000) * (np.exp(self.coeffs[1,1] *np.log(T) + self.coeffs[1,2] / T + \
-                self.coeffs(1,3) / T ** 2 + self.coeffs[1,4])) + \
-            (T>=1000) * (np.exp(self.coeffs[2,1] * np.log(T) + self.coeffs[2,2] / T + \
-                self.coeffs[2,3] / T ** 2 + self.coeffs[2,4]))
+        mu = (T<1000) * (np.exp(self.coeffs[0,0] *np.log(T) + self.coeffs[0,1] / T + \
+                self.coeffs[0,2] / T ** 2 + self.coeffs[0,3])) + \
+            (T>=1000) * (np.exp(self.coeffs[1,0] * np.log(T) + self.coeffs[1,1] / T + \
+                self.coeffs[1,2] / T ** 2 + self.coeffs[1,3]))
         return mu * 1e-7

@@ -7,6 +7,14 @@ from SModel import SModel
 import tools
 
 prop = Prop(['yaml/air.yaml', 'yaml/C_liu25.yaml'])
+
+# import sys
+# sys.path.append('yaml')
+# from Fe import Fe
+# prop = Prop(['yaml/Ar.yaml'])
+# prop = Fe(prop)
+# prop.coeffs = np.asarray(prop.coeffs)
+
 prop.Tg = 300
 prop.Pg = 101325
 prop.Ti = 3000
