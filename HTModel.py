@@ -177,14 +177,15 @@ class HTModel:
         else:
             print('deMethod not available.')
 
-        # Post-process results
+        # Post-process results.
+        # Remove added time, if necessary.
         if opts_tadd == 1:
             Tout = Tout[1:]
             mpo = mpo[1:]
             Xo = Xo[1:]
 
         dpo = ((6 * mpo) / (prop.rho(Tout) * np.pi)) ** (1 / 3) * 1e9  # calculate diameter over time
-        # mpo = mpo / np.expand_dims(mpo[:,0], 1)  # output relative change in particle mass over time
+        # mpo = mpo / np.expand_dims(mpo[:,0], 1)  # would normalize the particle mass
 
         return Tout, dpo, mpo, Xo
 
@@ -192,6 +193,7 @@ class HTModel:
     def dp(self, mp, T):
         """
         Function for nanoparticle diameter as a function of mass and temperature.
+        Allow for contraction / expansion of the particles and change in mass.
         Helper function for the d_dt methods below.
         """
         return 1e9 * (6 * mp / (np.pi * self.prop.rho(T))) ** (1./3)  # Output in nm
@@ -371,8 +373,8 @@ class HTModel:
         q = np.array(q)
         return q
 
-
-    def get_mfp(self, prop, T):
+    @staticmethod
+    def get_mfp(prop, T):
         """
         Computes the Maxwell mean free path of the gas.
 
