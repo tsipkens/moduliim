@@ -578,18 +578,21 @@ class HTModel:
         q : float or np.array, annealing rate
         dXdt : float or np.array, rate of change of fraction of particle
 
-        Note:
-        # Arrhenius for various transformations in the material
-        # are contained in prop.A and prop.E, as arrays.
+        Notes:
+        1. Arrhenius for various transformations in the material
+        are contained in prop.A and prop.E, as arrays.
+
+        2. Equations are adjusted, such that dXdt is phrased simply in terms of X.
+        This makes the volumetric formulation more explicity.
         """
         
-        Np = (dp**3 * np.pi * prop.rho(T)) / (6 * prop.M) * NA  # number of atoms in nanoparticle
+        Np = (dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)  # moles of atoms in nanoparticle
+        Nd = (1 - X) * (prop.Xd * Np)  # moles of defects
         
+        # Define Arrhenius expression.
         def k_fun(A, E):
             with np.errstate(over='ignore'):  # can overflow, that is okay
                 return A * np.exp(-E / (R * T))
-
-        Nd = (1 - X) * (prop.Xd * Np)  # Number of defects
 
         # Compute heat transfer, looping over contributions.
         q = np.zeros_like(T)
@@ -601,13 +604,13 @@ class HTModel:
             # Rearrange Eq. (38) and take derivative.
             # Combine with pre-factor below.
             if prop.neg[ii] == 1:
-                dXdt = dXdt - k * Nd
+                dXdt = dXdt + k * (1 - X)
             else:
-                dXdt = dXdt + k * X * Np / 2
+                dXdt = dXdt - k * X / 2 / prop.Xd
         
-        # Incorporate pre-factor.
-        q = q * (-Nd / NA)
-        dXdt = dXdt * (-1 / (prop.Xd * Np))
+        # Incorporate pre-factor for heat transfer.
+        q = -Nd * q
+        dXdt = dXdt
         
         return q, dXdt
 
