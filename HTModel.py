@@ -16,6 +16,7 @@ H = 6.62606957e-34  # Planck"s constant [m^2.kg/s]
 C = 2.99792458e8    # Speed of light in a vacuum [m/s]
 KB =  1.3806488e-23 # Boltzmann constant [m^2.kg/s^2/K]
 R = 8.3144621       # Universal gas constant [J/mol/K]
+NA = 6.0221409e23   # Avogadro's number [-]
 
 """
 HTModel: A class containing a heat transfer model for LII. 
@@ -110,9 +111,9 @@ class HTModel:
         mpi = (prop.rho0 * (dp0 * 1e-9) ** 3 * (np.pi / 6)) * mass_conv  # initial mass, [ag]
 
         if hasattr(prop, 'Xi'):
-            Xi = np.asarray(prop.Xi)
+            Xi = np.asarray(prop.Xi) * np.ones_like(Ti)
         else:
-            Xi = np.array([1])
+            Xi = np.array([1]) * np.ones_like(Ti)
 
         # Starting point exception
         if t[0] > 0.1:  # allows for initial condition at t=0 instead of first entry in time vector
@@ -141,15 +142,19 @@ class HTModel:
         yi = np.concatenate([Ti, mpi, Xi] if self.opts['ann'] != 'none' else [Ti, mpi])
 
         # Solve the ODE
-        if self.opts['deMethod'] in ['default']:  # specifics of ODE solver call
-            
-            sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='BDF')  # use BDF method as good for stiff ODEs
+        if self.opts['deMethod'] in ['default', 'BDF', 'RK45']:  # specifics of ODE solver call
+
+            if self.opts['deMethod'] in ['RK45']:
+                sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='RK45')
+
+            else:
+                sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='BDF')  # use BDF method as good for stiff ODEs
 
             Tout = np.maximum(sol.y[:Nd, :], prop.Tg)
             mpo = sol.y[Nd:2*Nd, :] / mass_conv
 
             if self.opts['ann'] == 'none':
-                Xo = Xi * np.ones_like(Tout)
+                Xo = Xi[0] * np.ones_like(Tout)
             else:
                 Xo = sol.y[2*Nd:3*Nd, :]
 
@@ -289,7 +294,7 @@ class HTModel:
 
         # Evaluate the relevant model by calling subfunctions.
         if model in {'free-molecular', 'fm'}:
-            q = self.qc_fm(prop, T, dp, prop.Tg)
+            q = self.qc_fm(prop, T, dp, prop.Tg)[0]
 
         elif model == 'continuum':
             q = self.qc_cont(prop, T, dp, prop.Tg)
@@ -321,10 +326,11 @@ class HTModel:
         Returns:
         - q: Rate of free molecular conduction [W].
         """
+        ct = (8 * KB * prop.Tg / (prop.PI * prop.mg)) ** (1/2)
         alpha = np.clip(prop.alpha, 0, 1)
-        q = ((alpha * prop.Pg * prop.ct() * np.pi * (dp ** 2) / (8 * Tg)) *
+        q = ((alpha * prop.Pg * ct * np.pi * (dp ** 2) / (8 * Tg)) *
             prop.gamma2(T) * (T - Tg))
-        return q
+        return q, ct
 
     def qc_cont(self, prop, T, dp, Tg):
         """
@@ -365,7 +371,7 @@ class HTModel:
         
         for Ti, dpi in zip(T, dp):
             def residual(T_delta):
-                return self.q_fm(prop, Ti, dpi, T_delta) - self.q_cont(prop, T_delta, dpi + 2 * self.get_mfp(prop, T_delta), Tg)
+                return self.q_fm(prop, Ti, dpi, T_delta)[0] - self.q_cont(prop, T_delta, dpi + 2 * self.get_mfp(prop, T_delta), Tg)
 
             T_delta = fsolve(residual, [Tg, Ti])[0]
             q.append(self.q_fm(prop, Ti, dpi, T_delta))
@@ -412,8 +418,22 @@ class HTModel:
         - hv: Latent heat of vaporization/sublimation [J/kg].
         - pv: Vapor pressure [Pa].
         """
+
+        # --- Consider case of multiple evaporating species. ---
+        if hasattr(prop, 'evap'):
+            J = np.zeros_like(T)
+            q = np.zeros_like(T)
+
+            for ii in range(len(prop.evap)):
+                # Create a new attribute name based on the index
+                prop_ii = prop.promote('evap', ii)
+                
+                q, J, hv, pv = self.q_evap(prop_ii, T, dp)
+            
+            return q, J, hv, pv
+        # ------------------------------------------------------
+
         dp = np.array(dp) * 1e-9  # Convert dp to meters for SI units
-        prop = self.prop
 
         if hasattr(prop, 'gamma'):
             if prop.gamma is None:
@@ -426,7 +446,7 @@ class HTModel:
             prop.alpham = lambda T: 1
 
         hv = prop.hv(T)
-        pv = prop.pv(T, dp, hv)
+        pv = prop.pv(T, dp, prop.hv)
         mv = prop.mv(T) if callable(prop.mv) else prop.mv
 
         cv = np.sqrt(np.maximum(8 * KB * T / (np.pi * mv), 0))  # Molecular speed [m/s], max(,0) prevents warnings
@@ -467,6 +487,9 @@ class HTModel:
         """
         if X is None:
             X = np.ones_like(dp)
+
+        if not hasattr(prop, 'tlm'):
+            prop.tlm = 0  # default, center laser pulse at t = 0
 
         # Convert units to SI
         dp = np.array(dp) * 1e-9  # Convert to meters
@@ -528,10 +551,10 @@ class HTModel:
         dp = dp * 1e-9  # Convert to meters (SI units)
 
         ann_option = self.opts.get('ann', 'none')
-        if ann_option in ['include', 'michelsen']:
-            q, dXdt = self.q_ann_mich(prop, T, dp, X)
-        elif ann_option == 'sipkens':
-            q, dXdt = self.q_ann_sip(prop, T, dp, X)
+        if ann_option in ['include', 'volumetric',  'michelsen']:
+            q, dXdt = self.q_ann_volumetric(prop, T, dp, X)
+        elif ann_option in ['sipkens', 'concentric']:
+            q, dXdt = self.q_ann_concentric(prop, T, dp, X)
         elif ann_option == 'photo':
             q, dXdt = self.q_ann_photo(prop, T, t, dp, X)
         else:
@@ -539,9 +562,10 @@ class HTModel:
         
         return q, dXdt
 
-    def q_ann_mich(self, prop, T, dp, X):
+
+    def q_ann_volumetric(self, prop, T, dp, X):
         """
-        Implementation of annealing rate calculation from Michelsen (2003).
+        Implementation of volumetric annealing rate calculation following Michelsen (2003).
         
         Parameters:
         htmodel : object (not used in this function but kept for compatibility)
@@ -553,34 +577,41 @@ class HTModel:
         Returns:
         q : float or np.array, annealing rate
         dXdt : float or np.array, rate of change of fraction of particle
+
+        Note:
+        # Arrhenius for various transformations in the material
+        # are contained in prop.A and prop.E, as arrays.
         """
-        Na = 6.0221409e23  # Avogadro's number
-        Np = (dp**3 * np.pi * prop.rho(T)) / (6 * prop.M) * Na  # number of atoms in nanoparticle
-        Xd = 0.01  # Initial defect density
+        
+        Np = (dp**3 * np.pi * prop.rho(T)) / (6 * prop.M) * NA  # number of atoms in nanoparticle
         
         def k_fun(A, E):
             with np.errstate(over='ignore'):  # can overflow, that is okay
                 return A * np.exp(-E / (R * T))
-        
-        # Arrhenius for various transformations in the material.
-        A_dis, E_dis = 1e18, 9.6e5
-        k_dis = k_fun(A_dis, E_dis)  # dissociation
-        A_int, E_int = 1e8, 8.3e4
-        k_int = k_fun(A_int, E_int)  # interstitial movement
-        A_vac, E_vac = 1.5e17, 6.7e5
-        k_vac = k_fun(A_vac, E_vac)  # vacancy movement
-        
-        DH_int, DH_vac = -1.9e4, -1.4e5  # Energy changes
-        Nd = (1 - X) * (Xd * Np)  # Number of defects
-        
-        q = -(DH_int * k_int + DH_vac * k_vac) * Nd / Na
 
-        # Rearrange Eq. (38) and take derivative.
-        dXdt = -1 / (Xd * Np) * (X * Np / 2 * k_dis - (k_int + k_vac) * Nd)
+        Nd = (1 - X) * (prop.Xd * Np)  # Number of defects
+
+        # Compute heat transfer, looping over contributions.
+        q = np.zeros_like(T)
+        dXdt = np.zeros_like(T)
+        for ii in range(len(prop.A)):
+            k = k_fun(prop.A[ii], prop.E[ii])
+            q = q + prop.DH[ii] * k
+
+            # Rearrange Eq. (38) and take derivative.
+            # Combine with pre-factor below.
+            if prop.neg[ii] == 1:
+                dXdt = dXdt - k * Nd
+            else:
+                dXdt = dXdt + k * X * Np / 2
+        
+        # Incorporate pre-factor.
+        q = q * (-Nd / NA)
+        dXdt = dXdt * (-1 / (prop.Xd * Np))
         
         return q, dXdt
 
-    def q_ann_sip(self, prop, T, dp, X):
+    def q_ann_concentric(self, prop, T, dp, X):
         """
         Rate of annealing based on the simplified model of Sipkens (2019).
         
@@ -601,15 +632,13 @@ class HTModel:
         
         dd_dt = 2 * A0 * np.exp(-E / (R * T))
         
-        DH = 0  # multiply by percentage of defects existing
-        
         # Compute rate of change of fraction of particle
         X = np.maximum(X, 0.)  # bound X
         X = np.minimum(X, 1.)
         dXdt = 3 * (1 - X) ** (2/3) / dp * dd_dt
         
         # Compute annealing rate q
-        q = (DH * dXdt * dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)
+        q = (prop.DH * dXdt * dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)
         
         return q, dXdt
 

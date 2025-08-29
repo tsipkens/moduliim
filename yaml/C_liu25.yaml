@@ -20,7 +20,6 @@ g6: -1.6066706534e-20
 g7: 9.8549838293e-25
 gamma1: 'lambda self, T: self.g0 + self.g1*T + self.g2*T**2 + self.g3*T**3 + self.g4*T**4 + self.g5*T**5 + self.g6*T**6 + self.g7*T**7' # from N2
 gamma2: 'lambda self, T: (self.gamma1(T) + 1) / (self.gamma1(T) - 1)'
-ct: 'lambda self: (8 * KB * self.Tg / (PI * self.mg)) ** (1./2)'
 k0: 9.6974968295e-3
 k1: 6.3285371033e-5
 k2: -4.064380813e-9
