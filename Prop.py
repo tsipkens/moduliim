@@ -40,8 +40,11 @@ def load_yaml(fns):
 class LambdaWrapper:
     def __init__(self, func_str, instance):
         self.func_str = func_str
-        func = eval(func_str)            # lambda self, T: ...
-        self._callable = partial(func, instance)  # bind instance once
+        self.instance = instance
+
+        # Parse and bind once
+        func = eval(func_str)
+        self._callable = partial(func, instance)
 
     def __call__(self, *args, **kwargs):
         return self._callable(*args, **kwargs)
@@ -51,28 +54,40 @@ class LambdaWrapper:
 
     def add_args(self, expected_args, default_value="None"):
         """
-        Add extra arguments to the lambda until it has all of the arguments from expected_args.
-        The new arguments will have default values.
+        Add extra arguments with default values until the lambda has all
+        of the arguments in expected_args. Keeps instance binding intact.
+
+        Used to add arguments as optional during function validation.
         """
 
-        # Get current arguments of the lambda funciton.
-        node = ast.parse(self.func_str, mode='eval')
-        if isinstance(node.body, ast.Lambda):
-            args = [arg.arg for arg in node.body.args.args]
-        else:
+        # Parse the existing lambda
+        node = ast.parse(self.func_str, mode="eval")
+        if not isinstance(node.body, ast.Lambda):
             raise ValueError("Validated property is not a lambda expression.")
 
-        # Return if already enough arguments.
-        if len(expected_args) == len(args):
-            return  # already has enough arguments
+        current_args = [arg.arg for arg in node.body.args.args]
 
-        # Add arguments until the correct number are present.
-        new_args = [f"{expected_args[ii-len(args)+1]}={default_value}" for ii in range(len(args), len(expected_args)+1)]
-        # Insert before the colon in the original lambda
-        lambda_body = self.func_str.split(":", 1)[1]  # body after colon
-        new_lambda = f"lambda {', '.join(args + new_args)}: {lambda_body}"
+        # Drop 'self' if present (already bound)
+        if current_args and current_args[0] == "self":
+            current_args = current_args[1:]
+
+        # Nothing to do if already complete
+        if len(current_args) >= len(expected_args) - 1:  # minus self
+            return
+
+        # Build new arg list (exclude self)
+        needed = expected_args[len(current_args):]  # skip self
+        new_args = [f"{name}={default_value}" for name in needed]
+
+        # Rebuild lambda string
+        lambda_body = self.func_str.split(":", 1)[1]
+        new_lambda = f"lambda self, {', '.join(current_args + new_args)}: {lambda_body}"
+
+        # Store new string and rebind
         self.func_str = new_lambda
-        self.func = eval(new_lambda)
+        func = eval(new_lambda)
+        self._callable = partial(func, self.instance)
+
 
 
 class Prop:
@@ -117,6 +132,7 @@ class Prop:
     def validate(self):
         """
         Validates the function inputs and modifies them if necessary.
+        See LambdaWrapper's add_args above for more details.
         """
         patterns = load_yaml('yaml\\validator.yaml')
 

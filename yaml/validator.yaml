@@ -1,3 +1,13 @@
-# Contains patterns that are expected for various members of Prop.
+# Contains patterns that are expected for various functions in Prop.
+
+# Sensible energy parameter.
+rho: ['T']
+cp: ['T']
+
+# Vaporization parameters.
 pv: ['T', 'dp', 'hv']
 hv: ['T']
+Mv: ['T']
+
+# Optical properties.
+Em: ['l', 'dp', 'X']
