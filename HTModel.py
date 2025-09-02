@@ -53,7 +53,7 @@ class HTModel:
     opts: Dict[str, Any] = {}
 
     def __init__(self, prop, x=['dp0'], t=np.array([0]), **kwargs):
-        self.prop = copy.copy(prop)
+        self.prop = prop
         self.x = x if isinstance(x, list) else [x]
         self.t = t
         self.opts = {
@@ -201,7 +201,7 @@ class HTModel:
         Allow for contraction / expansion of the particles and change in mass.
         Helper function for the d_dt methods below.
         """
-        return 1e9 * (6 * mp / (np.pi * self.prop.rho(T))) ** (1./3)  # Output in nm
+        return np.maximum(1e9 * (6 * mp / (np.pi * self.prop.rho(T))) ** (1./3), 0.0)  # Output in nm
 
     # Mass component of the ODE.
     def dmdt(self, t, T, mp, X=1.):
@@ -453,6 +453,8 @@ class HTModel:
         nv = prop.alpham(T) * pv / (KB * T)  # Vapor number flux [m^-3]
 
         J = mv * nv * cv / 4 * np.pi * dp**2
+        J[dp == 0] = 0  # zero if no particle left
+
         q = hv * J
 
         return q, J, hv, pv
@@ -551,16 +553,28 @@ class HTModel:
         dp = dp * 1e-9  # Convert to meters (SI units)
 
         ann_option = self.opts.get('ann', 'none')
-        if ann_option in ['include', 'volumetric',  'michelsen']:
+        if ann_option in ['include', 'volumetric',  'michelsen', 'tarball']:
             q, dXdt = self.q_ann_volumetric(prop, T, dp, X)
         elif ann_option in ['sipkens', 'concentric']:
             q, dXdt = self.q_ann_concentric(prop, T, dp, X)
         elif ann_option == 'photo':
             q, dXdt = self.q_ann_photo(prop, T, t, dp, X)
         else:
-            q, dXdt = 0, 0
+            q, dXdt = np.ones_like(T), np.ones_like(T)
+
+        # Bound X.
+        # This avoids overstepping.
+        dXdt[X < 0] = 0
+        dXdt[X > 1] = 1
+        q[X < 0] = 0
+        q[X > 1] = 0
         
         return q, dXdt
+    
+    @staticmethod
+    def arrhenius(A, E, T):
+        with np.errstate(over='ignore'):  # can overflow, that is okay
+            return A * np.exp(-E / (R * T))
 
 
     def q_ann_volumetric(self, prop, T, dp, X):
@@ -583,34 +597,29 @@ class HTModel:
         are contained in prop.A and prop.E, as arrays.
 
         2. Equations are adjusted, such that dXdt is phrased simply in terms of X.
-        This makes the volumetric formulation more explicity.
+        This makes the volumetric formulation more explicitly.
         """
-        
-        Np = (dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)  # moles of atoms in nanoparticle
-        Nd = (1 - X) * (prop.Xd * Np)  # moles of defects
-        
-        # Define Arrhenius expression.
-        def k_fun(A, E):
-            with np.errstate(over='ignore'):  # can overflow, that is okay
-                return A * np.exp(-E / (R * T))
 
-        # Compute heat transfer, looping over contributions.
+        # Compute annealing and heat transfer rates.
         q = np.zeros_like(T)
         dXdt = np.zeros_like(T)
+        
         for ii in range(len(prop.A)):
-            k = k_fun(prop.A[ii], prop.E[ii])
+            k = self.arrhenius(prop.A[ii], prop.E[ii], T)
             q = q + prop.DH[ii] * k
 
             # Rearrange Eq. (38) and take derivative.
-            # Combine with pre-factor below.
-            if prop.neg[ii] == 1:
-                dXdt = dXdt + k * (1 - X)
-            else:
-                dXdt = dXdt - k * X / 2 / prop.Xd
+            dXdt = dXdt + k * (1 - X)
+
+        # Modifier for dissociation.
+        if hasattr(prop, 'Edis'):
+            k = self.arrhenius(prop.Adis, prop.Edis, T)
+            dXdt = dXdt - k * X / 2 / prop.Xd
         
         # Incorporate pre-factor for heat transfer.
-        q = -Nd * q
-        dXdt = dXdt
+        Np = (dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)  # moles of atoms in nanoparticle
+        fd = (1 - X) * prop.Xd  # fraction of "atoms" that are defects
+        q = Np * fd * q
         
         return q, dXdt
 
@@ -628,12 +637,8 @@ class HTModel:
         Returns:
         q : float or np.array, rate of annealing
         dXdt : float or np.array, rate of change of fraction of particle
-        """
-        # Set default values if 'E' and 'k0' are not attributes of prop
-        E = getattr(prop, 'E', 4e5)  # default: 5e5 from Newell, J. Appl. Polymer Sci., 1996
-        A0 = getattr(prop, 'A0', 1e5)  # default: 4e12 form Michelsen et al., 2003 prev. 1e5, changed again from 3e-8 * 2e13 / 5
-        
-        dd_dt = 2 * A0 * np.exp(-E / (R * T))
+        """        
+        dd_dt = 2 * self.arrhenius(prop.A, prop.E, T)
         
         # Compute rate of change of fraction of particle
         X = np.maximum(X, 0.)  # bound X
@@ -641,7 +646,8 @@ class HTModel:
         dXdt = 3 * (1 - X) ** (2/3) / dp * dd_dt
         
         # Compute annealing rate q
-        q = (prop.DH * dXdt * dp**3 * np.pi * prop.rho(T)) / (6 * prop.M)
+        Np = dp**3 * np.pi * prop.rho(T) / (6 * prop.M)  # moles of atoms in nanoparticle
+        q = prop.DH * dXdt * Np
         
         return q, dXdt
 
