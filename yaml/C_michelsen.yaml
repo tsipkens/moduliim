@@ -46,14 +46,15 @@ evap:
 
 # Absorption properties.
 CEmr: 1
-Em: 'lambda prop, l, dp, X: 0.34'
-Emr: 'lambda prop, l1, l2, dp: prop.CEmr'
-Eml: 'lambda prop, dp, X: prop.Em(prop.l_laser, dp, X)'
+Em: 'lambda self, l, dp, X: 0.34'
+Emr: 'lambda self, l1, l2, dp: self.CEmr'
+Eml: 'lambda self, dp, X: self.Em(self.l_laser, dp, X)'
 
 # Annealing properties.
 Xd: 0.01  # initial defect density
 # [dissociation, interstitial movement, vacancy movement]
-A: [1e18, 1e8, 1.5e17]
-E: [9.6e5, 8.3e4, 6.7e5]
-DH: [0, -1.9e4, -1.4e5]  # energy changes
-neg: [0, 1, 1]  # whether contributing positive or negative to change in X
+A: [1e8, 1.5e17]
+E: [8.3e4, 6.7e5]
+DH: [-1.9e4, -1.4e5]  # energy changes
+Adis: 1.0e18  # dissociation contributions
+Edis: 9.6e5

@@ -32,14 +32,14 @@ hv: >-
 Tb: 3000
 hvb: 0.8214529
 Pref: 61.504275
-C: 37.05180035016673
+Ccc: 37.05180035016673
 Tref2: 4765
 Pref2: 12208958.197602175
 hvb2: 0.32978183880431733
 C2: 24.641634532414287
 gamma: 'lambda self: 0.18'
 pv0: >-
-  lambda self, T: exp(self.C-self.hvb*1e6 / R / T) * (T<=4765)+exp(self.C2-self.hvb2*1e6 / R / T) * (T>4765)
+  lambda self, T: exp(self.Ccc-self.hvb*1e6 / R / T) * (T<=4765)+exp(self.C2-self.hvb2*1e6 / R / T) * (T>4765)
 pv: 'lambda self, T, dp, hv: self.pv0(T)' #  * exp((4*self.gamma(dp,T)) / ((dp) * Rho(T) * R * T))
 
 # Absorption properties.
@@ -50,3 +50,5 @@ Eml: 'lambda self, dp, X: self.Em(self.l_laser, dp, X)'
 
 # Annealing properties.
 DH: 0
+E: 4e5  # default: 5e5 from Newell, J. Appl. Polymer Sci., 1996
+A: 1e5  # default: 4e12 form Michelsen et al., 2003 prev. 1e5, changed again from 3e-8 * 2e13 / 5

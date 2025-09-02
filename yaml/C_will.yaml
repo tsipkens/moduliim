@@ -1,0 +1,29 @@
+# Sensible and conduction properties.
+rho: 'lambda self, T: 1.85 * 1000'
+Acp: 2.90041
+Bcp: 36.4073
+cp: >-
+  lambda self, T: 1000 * (self.Acp - self.Bcp / np.sqrt(T))
+
+# Conduction properties.
+alpha: 0.275
+
+# Sublimation properties.
+coeffs_pv: [-2.4875e-13, 4.1754e-9, -2.7637e-5, 9.0558e-2, -122.962]
+coeffs_Mv: [1.0486e-13, -8.5954e-10, 2.9962e-6, 6.8654e-4, 17.179]
+coeffs_Hv: [1.0717e-12, -1.7946e-8, 1.1992e-4, -0.40713, 7.3660e2, 2.05398e5]
+
+# Sublimation model.
+pv: >-
+  lambda self, T, dp, hv: exp(polyval(self.coeffs_pv, T))
+Mv: 'lambda self, T: polyval(self.coeffs_Mv, T)  / 1000'
+hv: >-
+  lambda self, T: (polyval(self.coeffs_Hv, T)) / (self.mv(T) / 1.660538782e-24)
+alpham: 'lambda self, T: 1'
+mv: 'lambda self, T: self.Mv(T) * 1.660538782e-24'
+
+# Absorption properties.
+CEmr: 1
+Emr: 'lambda self, l1, l2, dp: self.CEmr'
+Em: 'lambda self, l, dp, X: 0.26'
+Eml: 'lambda self, dp, X: self.Em(self.l_laser, dp, X)'
