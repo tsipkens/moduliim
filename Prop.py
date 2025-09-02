@@ -106,7 +106,18 @@ class Prop:
         """
         Evaluate the Clausius-Clapeyron equation.
         """
-        return np.exp(self.C - self.hvb * 1e6 / self.Rs / T)
+        if not hasattr(self, 'Tref'):
+            self.Tref = self.Tb  # then boiling temperature 'Tb' was used
+        if not hasattr(self, 'Rs'):
+            self.Rs = self.R / self.M  # specific gas constant
+        if not hasattr(self, 'hvb'):
+            self.hvb = hv(self.Tref) / self.M / 1e6
+        if not hasattr(self, 'Pref'):  # assume atmospheric pressure reference
+            self.Pref = 101325
+        if not hasattr(self, 'Ccc'):
+            self.Ccc = np.log(self.Pref) + (self.hvb*1e6) / self.Rs / self.Tref
+
+        return np.exp(self.Ccc - self.hvb * 1e6 / self.Rs / T)
 
     def eq_kelvin(self, T, dp, hv):
         """
