@@ -31,16 +31,17 @@ class SModel:
     """
 
     def __init__(self, prop, x=['dp0'], t=np.array([0]), lam=np.array([442,716]), **kwargs):
-        self.prop = prop  # Material properties
-        self.lam = np.array(lam)  # Wavelengths
-        self.t = np.array(t)  # Time points
-        self.T = None  # Temperature, function handle
-        self.J = None  # Incandescence
+        self.prop = prop  # material properties
+        self.lam = np.array(lam)  # wavelengths
+        self.the = np.array([])  # angles (for scattering)
+        self.t = np.array(t)  # time vector
+        self.T = None  # temperature, function handle
+        self.J = None  # incandescence
         self.htmodel = None  # Embedded heat transfer model
 
-        self.x = x  # Variable names, quantities of interest (QoIs)
+        self.x = x  # variable names, quantities of interest (QoIs)
 
-        self.data_sc = None  # Used to scale Planck's law for stability
+        self.data_sc = None  # used to scale Planck's law for stability
 
         # Options for multicolor solver and pyrometry
         self.opts = {
@@ -321,3 +322,58 @@ class SModel:
         out = {}
 
         return To
+
+
+
+    @staticmethod
+    def csca(d, lam, the, prop, model='rdg-fa', X=None, Rg=None):
+        """
+        Calculate the absorption cross section.
+
+        Parameters:
+        -----------
+        d : ndarray
+            Particle diameter(s) in nm.
+        lam : ndarray
+            Wabelength(s) in nm.
+        prop : object
+            Material properties.
+        X : ndarray
+            Annealed fraction (optional)
+        """
+        k = 2 * np.pi / lam  # wavenumber
+        q = 2 * k * np.sin(the / 2)  # scattering vector
+        x = np.pi * d / lam  # size parameter
+
+        if X is None:  # if no annealing, set to ones of same size as T
+            X = np.array([1])
+
+        # Evaluate cross section.
+        if 'rdg-fa' in model or 'rayleigh' in model:  # RDG-FA (volumetric), same as Rayleigh save for Npp
+            C = 1.0
+            S = (q * Rg < 1) * (1 - (q * Rg) ** 2 / 3) + \
+                  (q * Rg >= 1) * C * (q * Rg) ** (-prop.Df)  # structure factor
+
+            if hasattr(prop, 'm'):
+                Fm = np.abs((prop.m**2 - 1) / (prop.m**2 + 2)) ** 2
+            else:
+                Fm = prop.Fm(lam, d, X)
+                
+            Npp = prop.kf * (Rg / (d / 2)) ** prop.Df  # number of primaries
+            dCsca = k ** 4 * (d / 2) ** 6 * Fm * S * Npp ** 2
+
+        elif 'mie' in model:  # Mie absorption
+            import miepython as mie  # import mie library
+            # _, qsca, _, _ = mie.efficiencies(prop['m'], d, lam)
+            # Csca = qsca * (np.pi * d ** 2 / 4)  # multiple eff. by cross section
+            
+            S1, S2 = mie.mie_S1_S2(prop.m, x, np.cos(the))
+
+            # Differential scattering cross section [m^2/sr]
+            dCsca = (np.abs(S1)**2 + np.abs(S2)**2) / (2 * k**2)
+
+        else:
+            dCsca = None  # unsupported model
+
+        return dCsca
+    
