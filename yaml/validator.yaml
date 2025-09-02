@@ -1,0 +1,3 @@
+# Contains patterns that are expected for various members of Prop.
+pv: ['T', 'dp', 'hv']
+hv: ['T']

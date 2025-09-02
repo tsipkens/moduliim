@@ -1,11 +1,15 @@
 import numpy as np
+
+# Import specific functions to help YAML shorthand.
+from numpy import exp, polyval
+
 import yaml
 
 import copy
 
-from types import MethodType
+import ast
+from functools import partial
 
-from pprint import pprint
 
 # Define constants.
 H = 6.62606957e-34  # Planck"s constant [m^2.kg/s]
@@ -31,58 +35,116 @@ def load_yaml(fns):
 
     return prop
 
+
+# Define two classes that handle bound lambdas and their display.
+class LambdaWrapper:
+    def __init__(self, func_str, instance):
+        self.func_str = func_str
+        func = eval(func_str)            # lambda self, T: ...
+        self._callable = partial(func, instance)  # bind instance once
+
+    def __call__(self, *args, **kwargs):
+        return self._callable(*args, **kwargs)
+
+    def __repr__(self):
+        return self.func_str
+
+    def add_args(self, expected_args, default_value="None"):
+        """
+        Add extra arguments to the lambda until it has all of the arguments from expected_args.
+        The new arguments will have default values.
+        """
+
+        # Get current arguments of the lambda funciton.
+        node = ast.parse(self.func_str, mode='eval')
+        if isinstance(node.body, ast.Lambda):
+            args = [arg.arg for arg in node.body.args.args]
+        else:
+            raise ValueError("Validated property is not a lambda expression.")
+
+        # Return if already enough arguments.
+        if len(expected_args) == len(args):
+            return  # already has enough arguments
+
+        # Add arguments until the correct number are present.
+        new_args = [f"{expected_args[ii-len(args)+1]}={default_value}" for ii in range(len(args), len(expected_args)+1)]
+        # Insert before the colon in the original lambda
+        lambda_body = self.func_str.split(":", 1)[1]  # body after colon
+        new_lambda = f"lambda {', '.join(args + new_args)}: {lambda_body}"
+        self.func_str = new_lambda
+        self.func = eval(new_lambda)
+
+
 class Prop:
     def __init__(self, fns=[]):
         prop = load_yaml(fns)  # load yaml file, returns dictionary
 
         # Import constants.
-        self.H = 6.62606957e-34  # Planck"s constant [m^2.kg/s]
-        self.C = 2.99792458e8    # Speed of light in a vacuum [m/s]
-        self.KB =  1.3806488e-23 # Boltzmann constant [m^2.kg/s^2/K]
-        self.R = 8.3144621       # Universal gas constant [J/mol/K]
+        self.H = H    # Planck"s constant [m^2.kg/s]
+        self.C = C    # Speed of light in a vacuum [m/s]
+        self.KB = KB  # Boltzmann constant [m^2.kg/s^2/K]
+        self.R = R    # Universal gas constant [J/mol/K]
         self.PI = np.pi
 
         for key in prop.keys():
             self.add(key, prop[key])
 
+        self.validate()
+
     def copy(self):
         return copy.copy(self)
 
     def add(self, key, value):
-        try:
-            fun = eval(value)
-            if callable(fun):  # then add as a bound method
-                setattr(self, key, MethodType(fun, self))
-                setattr(self, key + "_fun", value)  # save text version in prop
-            else:
-                setattr(self, key, eval(value))  # add as an attribute directly
-        except:
-            if callable(value):
-                setattr(self, key, MethodType(value, self))
-            else:
-                setattr(self, key, value)  # add value directly
+        
+        # If list, convert entries to floats.
+        def try_float(x):
+            try:
+                return float(x)
+            except (ValueError, TypeError):
+                return x  # leave strings that are not numbers as-is
+            
+        if isinstance(value, list):
+            value = [try_float(x) for x in value]
+            setattr(self, key, np.array(value))  # convert list to array for computations
+
+        elif isinstance(value, str) and value.strip().startswith("lambda"):
+            # Add as LambdaWrapper descriptor on the class and bind method.
+            setattr(self, key, LambdaWrapper(value, self))
+
+        else:
+            setattr(self, key, try_float(value))  # directly assign value
+    
+    def validate(self):
+        """
+        Validates the function inputs and modifies them if necessary.
+        """
+        patterns = load_yaml('yaml\\validator.yaml')
+
+        # Loop through properties in file and validate.
+        for key in patterns.keys():
+            self.__getattribute__(key).add_args(patterns[key])
+                
 
     # Override __repr__ so Jupyter uses it
     def __repr__(self):
-        v = vars(self).copy()
-        keys = vars(self).keys()
-        
-        # Flag duplicates.
-        todelete = []
-        for key in keys:
-            if key + '_fun' in keys:
-                todelete.append(key)
-
-        # Now delete duplicates. 
-        for key in todelete:
-            v[key] = v[key + '_fun']  # move text over
-            del v[key + '_fun']  # delete text
-
         lines = []
-        lines.append('\r' +'\033[32m' + 'Prop:' + '\033[0m')
-        for key, value in v.items():
-            lines.append(f"  \033[34m{key}\033[0m → {value}")
-        lines.append(' ')
+        lines.append('\r' + '\033[32m' + 'Prop:' + '\033[0m')
+
+        # First, show instance attributes
+        for attr, val in self.__dict__.items():
+            if isinstance(val, LambdaWrapper):
+                val_repr = repr(val)
+            elif callable(val):
+                val_repr = "<bound method>"
+            else:
+                val_repr = repr(val)
+            lines.append(f"  \033[34m{attr}\033[0m → {val_repr}")
+
+        # Then show LambdaWrapper descriptors on the class
+        for attr, val in self.__class__.__dict__.items():
+            if isinstance(val, LambdaWrapper):
+                # Access the LambdaWrapper itself, not the bound lambda
+                lines.append(f"  \033[34m{attr}\033[0m → {val}")
 
         return "\n".join(lines)
     
@@ -101,6 +163,24 @@ class Prop:
         out = b
         out[cond] = a[cond]
         return out
+    
+    def promote(self, key, idx):
+        """
+        Move an indexed value from a list of dictionaries in prop to inherent attributes of prop.
+        """
+
+        # Get dictionary specified by index and key arguments.
+        retrieved_dict = self.__getattribute__(key)[idx]
+
+        # Copy prop and delete the corresponding key.
+        prop = self.copy()
+        delattr(prop, key)
+        
+        for key, value in retrieved_dict.items():  # loop through new keys
+            prop.add(key, value)  # add each key
+            
+        return prop
+
     
     def eq_claus_clap(self, T, dp, hv):
         """
