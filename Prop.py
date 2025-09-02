@@ -1,12 +1,12 @@
 import numpy as np
 
 # Import specific functions to help YAML shorthand.
+# Not used directly but used in eval calls.
 from numpy import exp, polyval
 
+import types
 import yaml
-
 import copy
-
 import ast
 from functools import partial
 
@@ -32,8 +32,34 @@ def load_yaml(fns):
                 prop.update(yaml.safe_load(stream))  # append new properties
             except yaml.YAMLError as exc:
                 print(exc)
+    
+    # Parse prop inputs.
+    for k, v in prop.items():
+        prop[k] = parse_value(v)
 
     return prop
+
+def parse_value(v):
+        """
+        Normalize a value from YAML or constants:
+        - Lists of numbers -> numpy arrays
+        - Strings that can be converted to floats -> float
+        - Leave other strings as-is
+        """
+        if isinstance(v, list):
+            try:
+                return np.array([float(x) for x in v])
+            except (ValueError, TypeError):
+                return np.array(v)  # leave as array of strings if cannot convert
+        elif isinstance(v, (int, float)):
+            return float(v)
+        elif isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return v  # leave string as-is
+        else:
+            return v
 
 
 # Define two classes that handle bound lambdas and their display.
@@ -42,7 +68,8 @@ class LambdaWrapper:
         self.func_str = func_str
         self.instance = instance
 
-        # Parse and bind once
+        # Parse and bind once and cache.
+        self._ast = ast.parse(func_str, mode="eval")
         func = eval(func_str)
         self._callable = partial(func, instance)
 
@@ -61,7 +88,7 @@ class LambdaWrapper:
         """
 
         # Parse the existing lambda
-        node = ast.parse(self.func_str, mode="eval")
+        node = self._ast
         if not isinstance(node.body, ast.Lambda):
             raise ValueError("Validated property is not a lambda expression.")
 
@@ -91,55 +118,113 @@ class LambdaWrapper:
 
 
 class Prop:
+    __slots__ = ("_store", )  # smaller memory footprint
+    
     def __init__(self, fns=[]):
-        prop = load_yaml(fns)  # load yaml file, returns dictionary
+        self._store = {}
 
-        # Import constants.
-        self.H = H    # Planck"s constant [m^2.kg/s]
-        self.C = C    # Speed of light in a vacuum [m/s]
-        self.KB = KB  # Boltzmann constant [m^2.kg/s^2/K]
-        self.R = R    # Universal gas constant [J/mol/K]
-        self.PI = np.pi
+        if fns:
+            self._store.update(load_yaml(fns))
 
-        for key in prop.keys():
-            self.add(key, prop[key])
+        # Universal constants
+        self._store.update({
+            "H": H, "C": C, "KB": KB, "R": R, "PI": PI
+        })
 
         self.validate()
 
-    def copy(self):
-        return copy.copy(self)
+    def __getattr__(self, key):
+        try:
+            val = self._store[key]
+        except KeyError:
+            raise AttributeError(f"{key} not found")
+        # Wrap lambda strings lazily
+        if isinstance(val, str) and val.strip().startswith("lambda"):
+            lw = LambdaWrapper(val, self)
+            self._store[key] = lw
+            return lw
+        return val
 
-    def add(self, key, value):
-        
-        # If list, convert entries to floats.
-        def try_float(x):
-            try:
-                return float(x)
-            except (ValueError, TypeError):
-                return x  # leave strings that are not numbers as-is
-            
-        if isinstance(value, list):
-            value = [try_float(x) for x in value]
-            setattr(self, key, np.array(value))  # convert list to array for computations
-
-        elif isinstance(value, str) and value.strip().startswith("lambda"):
-            # Add as LambdaWrapper descriptor on the class and bind method.
-            setattr(self, key, LambdaWrapper(value, self))
-
+    def __setattr__(self, key, value):
+        if key == "_store":
+            object.__setattr__(self, key, value)
         else:
-            setattr(self, key, try_float(value))  # directly assign value
+            self._store[key] = value
+
+    def copy(self):
+        """
+        Return a shallow copy of this Prop instance.
+        LambdaWrapper objects are re-bound to the new instance
+        to prevent circular references.
+        """
+        new = Prop()
+        for k, v in self._store.items():
+            if isinstance(v, LambdaWrapper):
+                new._store[k] = LambdaWrapper(v.func_str, new)  # add functions
+            else:
+                new._store[k] = v  # add other values
+
+        return new
+
+    def to_dict(self):
+        """Convert instance of Prop to a simple dictionary."""
+        return self._store.copy()
+    
+    def view(self):
+        """
+        Return a lightweight SimpleNamespace where:
+        - Constants are converted to numbers or numpy arrays.
+        - Lambda strings are converted to normal Python functions.
+        - Nested lambdas referencing other lambdas work via the namespace.
+        """
+        ns = types.SimpleNamespace()
+
+        # Step 1: copy constants (convert lists to np.array)
+        for k, v in self._store.items():
+            if not (isinstance(v, str) and v.strip().startswith("lambda")):
+                setattr(ns, k, np.array(v) if isinstance(v, list) else v)
+
+        # Step 2: convert all lambdas to normal functions
+        # Bind them so that 'self' inside the lambda refers to ns
+        for k, v in self._store.items():
+            if isinstance(v, str) and v.strip().startswith("lambda"):
+                func = eval(compile(v, "<string>", "eval"))  # lambda self, ...
+                
+                # Wrap to capture 'ns' as self
+                def make_func(f):
+                    return lambda *args, **kwargs: f(ns, *args, **kwargs)
+                
+                setattr(ns, k, make_func(func))
+
+        return ns
     
     def validate(self):
         """
         Validates the function inputs and modifies them if necessary.
         See LambdaWrapper's add_args above for more details.
         """
-        patterns = load_yaml('yaml\\validator.yaml')
+        patterns = load_yaml("yaml\\validator.yaml")  # list of function arguments
+        for key, expected_args in patterns.items():  # loop through properties to validate
+            if key in self._store:
+                fn = self.__getattr__(key)
+                fn.add_args(expected_args)  # add necessary arguments to match pattern
+                self.__setattr__(key, fn)   # add back updated function
 
-        # Loop through properties in file and validate.
-        for key in patterns.keys():
-            self.__getattribute__(key).add_args(patterns[key])
-                
+    
+    def promote(self, key, idx):
+        """
+        Move an indexed value from a list of dictionaries in prop to inherent attributes of prop.
+        """
+
+        # Get dictionary specified by index and key arguments.
+        retrieved_dict = self._store[key][idx]
+
+        # Copy prop and delete the corresponding key.
+        prop = self.copy()
+        prop._store.pop(key, None)
+        prop._store.update(retrieved_dict)
+            
+        return prop
 
     # Override __repr__ so Jupyter uses it
     def __repr__(self):
@@ -147,7 +232,7 @@ class Prop:
         lines.append('\r' + '\033[32m' + 'Prop:' + '\033[0m')
 
         # First, show instance attributes
-        for attr, val in self.__dict__.items():
+        for attr, val in self._store.items():
             if isinstance(val, LambdaWrapper):
                 val_repr = repr(val)
             elif callable(val):
@@ -168,35 +253,15 @@ class Prop:
         print(self.__repr__())
 
 
+    # --- PHYSICAL EQUATIONS ACCESSIBLE TO PROPS ---
     def iif(self, cond, a, b):
-        """
-        If function for writing inline conditional statements.
-        AUTHOR: Timothy Sipkens, 2020-12-27
-        """
+        """Inline if function for writing inline conditional statements."""
         a = np.asarray(a) * np.ones_like(cond)
         b = np.asarray(b) * np.ones_like(cond)
         cond = np.asarray(cond)
         out = b
         out[cond] = a[cond]
         return out
-    
-    def promote(self, key, idx):
-        """
-        Move an indexed value from a list of dictionaries in prop to inherent attributes of prop.
-        """
-
-        # Get dictionary specified by index and key arguments.
-        retrieved_dict = self.__getattribute__(key)[idx]
-
-        # Copy prop and delete the corresponding key.
-        prop = self.copy()
-        delattr(prop, key)
-        
-        for key, value in retrieved_dict.items():  # loop through new keys
-            prop.add(key, value)  # add each key
-            
-        return prop
-
     
     def eq_claus_clap(self, T, dp, hv):
         """
