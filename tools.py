@@ -34,18 +34,29 @@ def update_prop(obj, x=None):
     return obj, prop
 
 
-def plot_sweep(data, d, t, label='', cmap='rocket'):
-    df = pd.DataFrame(data)  # Transpose to align columns with series
-    df.columns = [f"{d[ii]}" for ii in range(len(d))]  # Name columns as "Series 1", "Series 2", ...
-    df['t'] = t  # Add an index column
-    df = pd.melt(df, id_vars='t', var_name=label, value_name='y')
-    
-    # if type(cmap) != str:
-    #     cmap = sns.color_palette([cmap(ii) for ii in np.linspace(0, 1, len(d))])
-    
-    ax = sns.lineplot(df, x='t', y='y', hue=label, palette=cmap)
-    if len(d) > 5:  # remove legend as too many items
-        ax.legend_.remove()
+
+def plot_sweep(x, y, c=None, cmap='rocket', usage=0.9, **kwargs):
+    """
+    Sweep through a colormap when generating a line plot.
+    usage : number between 0 and 1 that determines the amount of the colormap to use
+    """
+
+    # Get overlapping dimension (handles if data is transposed).
+    dim = np.where(np.asarray(np.shape(y)) != len(x))[0][0]
+    if dim == 0:
+        y = y.T
+
+    n = np.shape(y)[1]  # number of series
+    cm = get_cmap(cmap)  # get colormap
+
+    # Get colors for lines from colormap.
+    if c is None:
+        c = np.linspace(0, 1, n)
+    cm = cm((c - np.min(c)) / (np.max(c) - np.min(c)) * usage)
+
+    # Finally, plot using loop.
+    for ii in range(n):
+        plt.plot(x, y[:,ii], color=cm[ii], label=str(c[ii]), **kwargs)
 
 
 def plot(x, y, c=None, cmap='rocket', usage=1.0, **kwargs):
