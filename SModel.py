@@ -56,13 +56,14 @@ class SModel:
         T_sc = np.array([[3000]])  # Temperature for scaling/stability [K]
         self.data_sc = self.blackbody(T_sc, 1064) / (1064e-9)
 
-        self._print_properties()
+        print(self)
 
-    def _print_properties(self):
-        print('\r' +'\033[32m' + 'SModel > opts:' + '\033[0m')
+    def __repr__(self):
+        lines = []
+        lines.append('\r' +'\033[32m' + 'SModel > opts:' + '\033[0m')
         for key, value in self.opts.items():
-            print(f"  \033[34m{key}\033[0m → {value}")
-        print(' ')
+            lines.append(f"  \033[34m{key}\033[0m → {value}")
+        return "\n".join(lines)
 
 
     def inverse(self, J):
