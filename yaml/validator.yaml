@@ -5,9 +5,9 @@ rho: ['T']
 cp: ['T']
 
 # Vaporization parameters.
-pv: ['T', 'dp', 'hv']
+pv: ['T', 'dp', 'hv', 'X']
 hv: ['T']
-Mv: ['T']
+mv: ['T']
 
 # Optical properties.
 Em: ['l', 'dp', 'X']
