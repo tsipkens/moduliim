@@ -17,6 +17,7 @@ C = 2.99792458e8    # Speed of light in a vacuum [m/s]
 KB =  1.3806488e-23 # Boltzmann constant [m^2.kg/s^2/K]
 R = 8.3144621       # Universal gas constant [J/mol/K]
 NA = 6.0221409e23   # Avogadro's number [-]
+PI = np.pi
 
 """
 HTModel: A class containing a heat transfer model for LII. 
@@ -57,27 +58,31 @@ class HTModel:
         self.x = x if isinstance(x, list) else [x]
         self.t = t
         self.opts = {
-            'cond': 'free-molecular',  # Conduction model
-            'cond_sphere': 'primary',  # Heat transfer from equivalent sphere ('eq-sphere') or primary particle ('primary')
-            'evap': 'free-molecular',  # Evaporation model
-            'rad': 'none',  # Radiation model
-            'abs': 'none',  # Absorption model
-            'ann': 'none',  # Annealing model
-            'polydispersity': 0,  # Incorporate polydispersity
-            'deMethod': 'default'  # ODE solver method
+            'cond': 'free-molecular',  # conduction model
+            'cond_sphere': 'primary',  # heat transfer from equivalent sphere ('eq-sphere') or primary particle ('primary')
+            'vap': 'free-molecular',  # vaporization model
+            'vap_ann': False,   # whether the vaporization model is coupled with annealing species
+            'rad': 'none',  # radiation model
+            'abs': 'none',  # absorption model
+            'ann': 'none',  # annealing model
+            'polydispersity': 0,  # incorporate polydispersity
+            'deMethod': 'RK45'  # ODE solver method
         }
         self.opts.update(kwargs)  # Parse additional options
 
-        self._print_properties()
+        print(self)
 
-    def _print_properties(self):
-        print('\r' +'\033[32m' + 'HTModel > opts:' + '\033[0m')
-        print(f" \033[34m Conduction\033[0m → {self.opts['cond']} (from {self.opts['cond_sphere']})")
-        print(f" \033[34m Evaporation\033[0m → {self.opts['evap']}")
-        print(f" \033[34m Absorption\033[0m → {self.opts['abs']}" + (" (Gaussian)" if self.opts['abs'] == 'include' else ""))
-        print(f" \033[34m Radiation\033[0m → {self.opts['rad']}")
-        print(f" \033[34m Annealing\033[0m → {self.opts['ann']}")
-        print(' ')
+    def __repr__(self):
+        lines = []
+        lines.append('\r' +'\033[32m' + 'HTModel > opts:' + '\033[0m')
+        lines.append(f" \033[34m Conduction\033[0m → {self.opts['cond']} (from {self.opts['cond_sphere']})")
+        lines.append(f" \033[34m Vaporization\033[0m → {self.opts['vap']}")
+        lines.append(f" \033[34m Absorption\033[0m → {self.opts['abs']}" + (" (Gaussian)" if self.opts['abs'] == 'include' else ""))
+        lines.append(f" \033[34m Radiation\033[0m → {self.opts['rad']}")
+        lines.append(f" \033[34m Annealing\033[0m → {self.opts['ann']}")
+        lines.append(f" \033[34m ODE Method\033[0m → {self.opts['deMethod']}")
+        lines.append('\r')
+        return "\n".join(lines)
 
 
     def evaluate(self, x: List[float]):
@@ -97,66 +102,67 @@ class HTModel:
         
         # Same for dp0.
         if dp0 is None: dp0 = np.array([prop.dp0])
-
         Nd = len(dp0)  # number of size classes to consider in solver
 
-        # Initial conditions
+        # Initial temperature.
         Ti = prop.Ti * np.ones(Nd)  # initial temperature, [K]
 
         # Initial mass
         if not hasattr(prop, 'rho0'):
             prop.rho0 = prop.rho(prop.Tg)
-
         mass_conv = 1e21  # converts mass to attogram (ag)
         mpi = (prop.rho0 * (dp0 * 1e-9) ** 3 * (np.pi / 6)) * mass_conv  # initial mass, [ag]
 
+        # Initial annealed fraction.
         if hasattr(prop, 'Xi'):
             Xi = np.asarray(prop.Xi) * np.ones_like(Ti)
         else:
             Xi = np.array([1]) * np.ones_like(Ti)
-
-        # Starting point exception
+        
+        # Starting point exception (allows for gap between the laser pulse and measurements).
         if t[0] > 0.1:  # allows for initial condition at t=0 instead of first entry in time vector
             t = np.concatenate(([0], t))
             opts_tadd = 1
-        else:
-            opts_tadd = 0
+        else: opts_tadd = 0
 
         # Define the system of ODEs
         def dydt(t, y):
+            # Extract quantities.
             T = y[:Nd]
             m = np.abs(y[Nd:2*Nd]) / mass_conv
             X = y[2*Nd:3*Nd] if len(y) > 2 * Nd else None
 
+            # If no annealing.
             if self.opts['ann'] == 'none':
                 dTdt = self.dTdt(t, T, m)
                 dmdt = self.dmdt(t, T, m)
                 return np.concatenate([dTdt * 1e-9, dmdt * mass_conv * 1e-9])
-            else:
+            
+            if self.opts['ann'] != 'none':
                 dTdt = self.dTdt(t, T, m, X)
                 dmdt = self.dmdt(t, T, m, X)
                 dXdt = self.dXdt(t, T, m, X)
+                dXdt[X > 1] = 0  # stop when fully annealed
                 return np.concatenate([dTdt * 1e-9, dmdt * mass_conv * 1e-9, dXdt * 1e-9])
 
         # Initial state
         yi = np.concatenate([Ti, mpi, Xi] if self.opts['ann'] != 'none' else [Ti, mpi])
 
         # Solve the ODE
-        if self.opts['deMethod'] in ['default', 'BDF', 'RK45']:  # specifics of ODE solver call
-
+        if self.opts['deMethod'] in ['BDF', 'RK45']:  # specifics of ODE solver call
             if self.opts['deMethod'] in ['RK45']:
-                sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='RK45')
+                sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='RK45', max_step=(t[1]-t[0]))
 
             else:
-                sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='BDF')  # use BDF method as good for stiff ODEs
-
-            Tout = np.maximum(sol.y[:Nd, :], prop.Tg)
+                sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='BDF', max_step=(t[1]-t[0]))
+            
+            To = sol.y[:Nd, :]
             mpo = sol.y[Nd:2*Nd, :] / mass_conv
 
             if self.opts['ann'] == 'none':
-                Xo = Xi[0] * np.ones_like(Tout)
+                Xo = Xi[0] * np.ones_like(To)
             else:
-                Xo = sol.y[2*Nd:3*Nd, :]
+                Xo = np.clip(sol.y[2*Nd:3*Nd, :], 0, 1)
 
         elif self.opts['deMethod'] == 'Euler':
             dt = 0.2
@@ -175,7 +181,7 @@ class HTModel:
                 m_eval[ii] = m_eval[ii-1] + dydt_ii[1] * dt
                 X_eval[ii] = X_eval[ii-1] + dydt_ii[2] * dt
 
-            Tout = np.interp(t, t_eval, T_eval)
+            To = np.interp(t, t_eval, T_eval)
             mpo = np.interp(t, t_eval, m_eval) / mass_conv
             Xo = np.interp(t, t_eval, X_eval)
 
@@ -185,14 +191,14 @@ class HTModel:
         # Post-process results.
         # Remove added time, if necessary.
         if opts_tadd == 1:
-            Tout = Tout[1:]
+            To = To[1:]
             mpo = mpo[1:]
             Xo = Xo[1:]
 
-        dpo = ((6 * mpo) / (prop.rho(Tout) * np.pi)) ** (1 / 3) * 1e9  # calculate diameter over time
+        dpo = ((6 * mpo) / (prop.rho(To) * np.pi)) ** (1 / 3) * 1e9  # calculate diameter over time
         # mpo = mpo / np.expand_dims(mpo[:,0], 1)  # would normalize the particle mass
 
-        return Tout, dpo, mpo, Xo
+        return To, dpo, mpo, Xo
 
 
     def dp(self, mp, T):
@@ -205,7 +211,7 @@ class HTModel:
 
     # Mass component of the ODE.
     def dmdt(self, t, T, mp, X=1.):
-        return -self.J_evap(self.prop, T, self.dp(mp, T))
+        return -self.J_vap(self.prop, T, self.dp(mp, T), X)
 
     # Temperature component of the ODE.
     def dTdt(self, t, T, mp, X=1.):
@@ -217,12 +223,9 @@ class HTModel:
         if self.opts.get('cond', 'default') != 'none':
             dTdt = dTdt - self.q_cond(prop, T, self.dp(mp, T))[0]
 
-        # Evaporation model
-        evap_option = self.opts.get('evap', 'default')
-        if evap_option == 'mult':
-            dTdt = dTdt - self.q_evapm(prop, T, self.dp(mp, T))[0]
-        elif evap_option != 'none':
-            dTdt = dTdt - self.q_evap(prop, T, self.dp(mp, T))[0]
+        # Vaporation model
+        if self.opts.get('val', 'default') != 'none':
+            dTdt = dTdt - self.q_vap(prop, T, self.dp(mp, T), X)[0]
 
         # Radiative model
         if self.opts.get('rad', 'none') != 'none':
@@ -243,6 +246,7 @@ class HTModel:
         
         # Finalize dTdt expression
         dTdt = dTdt / (prop.cp(T) * mp)
+
         return dTdt
 
     # Phase change/annealing component of the ODE.
@@ -254,6 +258,10 @@ class HTModel:
         ann_option = self.opts.get('ann', 'none')
         if ann_option != 'none':
             dXdt = self.q_ann(self.prop, T, t, self.dp(mp, T), X)[1]  # get second ouput
+
+            # Accommodate vaporization of only species 1 - X.
+            if self.opts['vap_ann']:
+                dXdt = dXdt - X * self.dmdt(t, T, mp, X) / mp
 
         return dXdt
 
@@ -326,7 +334,7 @@ class HTModel:
         Returns:
         - q: Rate of free molecular conduction [W].
         """
-        ct = (8 * KB * prop.Tg / (prop.PI * prop.mg)) ** (1/2)
+        ct = (8 * KB * prop.Tg / (PI * prop.mg)) ** (1/2)
         alpha = np.clip(prop.alpha, 0, 1)
         q = ((alpha * prop.Pg * ct * np.pi * (dp ** 2) / (8 * Tg)) *
             prop.gamma2(T) * (T - Tg))
@@ -402,15 +410,16 @@ class HTModel:
         return lambda_mfp
 
 
-    def q_evap(self, prop, T, dp):
+    def q_vap(self, prop, T, dp, X=1.):
         """
-        Computes the rate of evaporation or sublimation energy loss from the nanoparticle.
+        Computes the rate of vaporation or sublimation energy loss from the nanoparticle.
 
         Parameters:
         - self: Instance of the heat transfer model.
         - prop: Properties of the material and gas.
         - T: Vector of nanoparticle temperatures [K].
         - dp: Nanoparticle diameter [nm].
+        - X: Annealed fraction [-]
 
         Returns:
         - q: Rate of evaporative/sublimative losses [W].
@@ -419,16 +428,18 @@ class HTModel:
         - pv: Vapor pressure [Pa].
         """
 
-        # --- Consider case of multiple evaporating species. ---
-        if hasattr(prop, 'evap'):
-            J = np.zeros_like(T)
-            q = np.zeros_like(T)
+        # --- Consider case of multiple vaporizing species. ---
+        if hasattr(prop, 'vapor_species'):
+            J = q = hv = pv = np.zeros_like(T)
 
-            for ii in range(len(prop.evap)):
-                # Create a new attribute name based on the index
-                prop_ii = prop.promote('evap', ii)
-                
-                q, J, hv, pv = self.q_evap(prop_ii, T, dp)
+            # Loop through and create namespace with required variables.
+            for ii in range(len(prop.vapor_species)):
+                prop_ii = prop.vapor_species[ii]  # get subset of properties
+                vap = self.q_vap(prop_ii, T, dp, X)
+                q = q + vap[0]
+                J = J + vap[1]
+                hv = hv + vap[2]
+                pv = pv + vap[3]
             
             return q, J, hv, pv
         # ------------------------------------------------------
@@ -443,28 +454,30 @@ class HTModel:
             prop.alpham = None
             
         if prop.alpham is None:
-            prop.alpham = lambda T: 1
-
+            alpham = 1
+        else:
+            alpham = prop.alpham(T)
+        
+        # Evaluate local copies of vapor properties.
         hv = prop.hv(T)
-        pv = prop.pv(T, dp, prop.hv)
-        mv = prop.mv(T) if callable(prop.mv) else prop.mv
+        pv = prop.pv(T, dp, prop.hv, X)
+        mv = prop.mv(T)
 
         cv = np.sqrt(np.maximum(8 * KB * T / (np.pi * mv), 0))  # Molecular speed [m/s], max(,0) prevents warnings
-        nv = prop.alpham(T) * pv / (KB * T)  # Vapor number flux [m^-3]
+        nv = alpham * pv / (KB * T)  # Vapor number flux [m^-3]
 
         J = mv * nv * cv / 4 * np.pi * dp**2
-        J[dp == 0] = 0  # zero if no particle left
 
         q = hv * J
 
         return q, J, hv, pv
         
 
-    def J_evap(self, prop, T, dp):
+    def J_vap(self, prop, T, dp, X=1.):
         """
         Simple bridging function to just output J.
         """
-        _, J, _, _ = self.q_evap(prop, T, dp)
+        _, J, _, _ = self.q_vap(prop, T, dp, X)
         return J
 
     def q_rad(self, prop, T, dp):
@@ -553,7 +566,7 @@ class HTModel:
         dp = dp * 1e-9  # Convert to meters (SI units)
 
         ann_option = self.opts.get('ann', 'none')
-        if ann_option in ['include', 'volumetric',  'michelsen', 'tarball']:
+        if ann_option in ['include', 'volumetric',  'michelsen']:
             q, dXdt = self.q_ann_volumetric(prop, T, dp, X)
         elif ann_option in ['sipkens', 'concentric']:
             q, dXdt = self.q_ann_concentric(prop, T, dp, X)
@@ -561,13 +574,6 @@ class HTModel:
             q, dXdt = self.q_ann_photo(prop, T, t, dp, X)
         else:
             q, dXdt = np.ones_like(T), np.ones_like(T)
-
-        # Bound X.
-        # This avoids overstepping.
-        dXdt[X < 0] = 0
-        dXdt[X > 1] = 1
-        q[X < 0] = 0
-        q[X > 1] = 0
         
         return q, dXdt
     
