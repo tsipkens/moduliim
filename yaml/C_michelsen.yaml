@@ -6,41 +6,44 @@ Brho: 1
 rho: 'lambda prop, T: (prop.Arho*2.303-prop.Brho*7.3106e-5*T)*1000'
 Ccp: 1
 cp: >-
-  lambda prop, T: prop.Ccp*(prop.R/0.01201)*(1.115*(597/T)**2*exp(597/T)*(exp(597/T)-1)**-2+1.789*(1739/T)**2*exp(1739/T)*(exp(1739/T)-1)**-2+T/8260)
+  lambda prop, T: prop.Ccp*(R/0.01201)*(1.115*(597/T)**2*exp(597/T)*(exp(597/T)-1)**-2+1.789*(1739/T)**2*exp(1739/T)*(exp(1739/T)-1)**-2+T/8260)
 alpha: 0.3
 
 # Multiple species sublimation.
-alpham: 'lambda self, T: 0.1'
-M: 0.01201
-evap:
+vapor_species:
   - species: 'C1'
     Tref: 4603.48
     Mv: 0.01201
-    hv: 'lambda prop, T: 7.266e5 - 5.111*T'
+    alpham: 'lambda self, T: 0.1'
+    hv: 'lambda self, T: 7.266e5 - 5.111*T'
     pv: 'lambda self, T,dp,hv: self.eq_claus_clap(T, dp, hv)'
     mv: 'lambda self, T: self.Mv * 1.660538782e-24'
   - species: 'C2'
     Tref: 4456.59
     Mv: 0.02402
-    hv: 'lambda prop, T: 8.545e5 - 12.326*T'
+    alpham: 'lambda self, T: 0.1'
+    hv: 'lambda self, T: 8.545e5 - 12.326*T'
     pv: 'lambda self, T,dp,hv: self.eq_claus_clap(T, dp, hv)'
     mv: 'lambda self, T: self.Mv * 1.660538782e-24'
   - species: 'C3'
     Tref: 4136.78
     Mv: 0.03603
-    hv: 'lambda prop, T: 8.443e5 - 26.921*T'
+    alpham: 'lambda self, T: 0.1'
+    hv: 'lambda self, T: 8.443e5 - 26.921*T'
     pv: 'lambda self, T,dp,hv: self.eq_claus_clap(T, dp, hv)'
     mv: 'lambda self, T: self.Mv * 1.660538782e-24'
   - species: 'C4'
     Tref: 4949.74
     Mv: 0.04804
-    hv: 'lambda prop, T: 9.811e5 - 7.787*T - 2.114e-3*T**2'
+    alpham: 'lambda self, T: 0.1'
+    hv: 'lambda self, T: 9.811e5 - 7.787*T - 2.114e-3*T**2'
     pv: 'lambda self, T,dp,hv: self.eq_claus_clap(T, dp, hv)'
     mv: 'lambda self, T: self.Mv * 1.660538782e-24'
   - species: 'C5'
     Tref: 4772.87
     Mv: 0.06005
-    hv: 'lambda prop, T: 9.898e5 - 7.069*T - 2.598e-3*T**2'
+    alpham: 'lambda self, T: 0.1'
+    hv: 'lambda self, T: 9.898e5 - 7.069*T - 2.598e-3*T**2'
     pv: 'lambda self, T,dp,hv: self.eq_claus_clap(T, dp, hv)'
     mv: 'lambda self, T: self.Mv * 1.660538782e-24'
 
@@ -51,6 +54,7 @@ Emr: 'lambda self, l1, l2, dp: self.CEmr'
 Eml: 'lambda self, dp, X: self.Em(self.l_laser, dp, X)'
 
 # Annealing properties.
+M: 0.01201
 Xd: 0.01  # initial defect density
 # [dissociation, interstitial movement, vacancy movement]
 A: [1e8, 1.5e17]

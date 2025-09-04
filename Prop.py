@@ -2,11 +2,10 @@ import numpy as np
 
 # Import specific functions to help YAML shorthand.
 # Not used directly but used in eval calls.
-from numpy import exp, polyval
+from numpy import exp, log, polyval
 
 import types
 import yaml
-import copy
 import ast
 from functools import partial
 
@@ -99,7 +98,7 @@ class LambdaWrapper:
             current_args = current_args[1:]
 
         # Nothing to do if already complete
-        if len(current_args) >= len(expected_args) - 1:  # minus self
+        if len(current_args) >= len(expected_args):  # minus self
             return
 
         # Build new arg list (exclude self)
@@ -122,16 +121,27 @@ class Prop:
     
     def __init__(self, fns=[]):
         self._store = {}
-
-        if fns:
+        
+        if type(fns) == dict:  # then parse dictionary into Prop
+            self._store.update(fns)
+        elif fns:
             self._store.update(load_yaml(fns))
 
         # Universal constants
-        self._store.update({
-            "H": H, "C": C, "KB": KB, "R": R, "PI": PI
-        })
+        # self._store.update({
+        #     "H": H, "C": C, "KB": KB, "R": R, "PI": PI
+        # })
 
         self.validate()
+
+        # Special case where multiple vapor species are specified.
+        # Then also parse each species, get LambdaWrappers, and validate. 
+        if hasattr(self, 'vapor_species'):
+            for ii in range(len(self.vapor_species)):
+                for k, v in self.vapor_species[ii].items():  # apply parse_values
+                    self.vapor_species[ii][k] = parse_value(v)
+                self.vapor_species[ii] = Prop(self.vapor_species[ii])  # use class to parse
+
 
     def __getattr__(self, key):
         try:
@@ -207,24 +217,10 @@ class Prop:
         for key, expected_args in patterns.items():  # loop through properties to validate
             if key in self._store:
                 fn = self.__getattr__(key)
+                if not type(fn) == LambdaWrapper:  # if not function, make function
+                    fn = LambdaWrapper(f'lambda self: {fn}', self)
                 fn.add_args(expected_args)  # add necessary arguments to match pattern
                 self.__setattr__(key, fn)   # add back updated function
-
-    
-    def promote(self, key, idx):
-        """
-        Move an indexed value from a list of dictionaries in prop to inherent attributes of prop.
-        """
-
-        # Get dictionary specified by index and key arguments.
-        retrieved_dict = self._store[key][idx]
-
-        # Copy prop and delete the corresponding key.
-        prop = self.copy()
-        prop._store.pop(key, None)
-        prop._store.update(retrieved_dict)
-            
-        return prop
 
     # Override __repr__ so Jupyter uses it
     def __repr__(self):
@@ -270,9 +266,9 @@ class Prop:
         if not hasattr(self, 'Tref'):
             self.Tref = self.Tb  # then boiling temperature 'Tb' was used
         if not hasattr(self, 'Rs'):
-            self.Rs = self.R / self.M  # specific gas constant
+            self.Rs = R / self.Mv  # specific gas constant
         if not hasattr(self, 'hvb'):
-            self.hvb = hv(self.Tref) / self.M / 1e6
+            self.hvb = hv(self.Tref) / self.Mv / 1e6
         if not hasattr(self, 'Pref'):  # assume atmospheric pressure reference
             self.Pref = 101325
         if not hasattr(self, 'Ccc'):
@@ -294,14 +290,17 @@ class Prop:
         """
         return np.exp(self.C - self.C1 / (T + self.C2))
 
-    def eq_mu(self, T):
+    def eq_mu(self, T, coeffs=None):
         """
         Returns the dynamic viscosity of a gas in units of Ns/m^2.  
         AUTHOR: Kyle Daun, 2020-12-17
         MODIFIED: Timothy Sipkens
         """
-        mu = (T<1000) * (np.exp(self.coeffs[0,0] *np.log(T) + self.coeffs[0,1] / T + \
-                self.coeffs[0,2] / T ** 2 + self.coeffs[0,3])) + \
-            (T>=1000) * (np.exp(self.coeffs[1,0] * np.log(T) + self.coeffs[1,1] / T + \
-                self.coeffs[1,2] / T ** 2 + self.coeffs[1,3]))
+        if coeffs == None:
+            coeffs = self.coeffs
+
+        mu = (T<1000) * (np.exp(coeffs[0,0] *np.log(T) + coeffs[0,1] / T + \
+                coeffs[0,2] / T ** 2 + coeffs[0,3])) + \
+            (T>=1000) * (np.exp(coeffs[1,0] * np.log(T) + coeffs[1,1] / T + \
+                coeffs[1,2] / T ** 2 + coeffs[1,3]))
         return mu * 1e-7
