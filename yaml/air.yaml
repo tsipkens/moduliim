@@ -2,3 +2,4 @@ mg: 4.8089207e-26 # for air
 gamma1: 'lambda self, T: 7/5' # from N2
 gamma2: 'lambda self, T: (self.gamma1(T) + 1)/(self.gamma1(T) - 1)'
 ct: 'lambda self: (8 * KB * self.Tg / (PI * self.mg)) ** (1./2)'
+mu: 'lambda self, T: 1.79e-5'  # at sea level and 15 C
