@@ -49,11 +49,13 @@ vapor_species:
 
 
 # Absorption properties.
-Em: 'lambda self, l, dp, X: 0.2' #0.2 * exp(5 * (X - 1))'
+# AAEfun: 'lambda self, X: 5 - (5 - 1) * X'
+# Em: 'lambda self, l, dp, X: 0.4 * (1 - (self.AAEfun(X) - 1) / (self.AAEfun(X) + 1) * l / 550) ** 2'
+Em: 'lambda self, l, dp, X: 0.2 * X'
 Eml: 'lambda self, dp, X: self.Em(self.l_laser, dp, X)'
 
 # Annealing properties.
 DH: [0,]
 A: [1e15,]  #1e15
-E: [80e3,]
+E: [90e3,]
 Xd: 0.01
