@@ -379,10 +379,10 @@ class HTModel:
         
         for Ti, dpi in zip(T, dp):
             def residual(T_delta):
-                return self.q_fm(prop, Ti, dpi, T_delta)[0] - self.q_cont(prop, T_delta, dpi + 2 * self.get_mfp(prop, T_delta), Tg)
+                return self.qc_fm(prop, Ti, dpi, T_delta)[0] - self.q_cont(prop, T_delta, dpi + 2 * self.get_mfp(prop, T_delta), Tg)
 
             T_delta = fsolve(residual, [Tg, Ti])[0]
-            q.append(self.q_fm(prop, Ti, dpi, T_delta))
+            q.append(self.qc_fm(prop, Ti, dpi, T_delta))
 
         q = np.array(q)
         return q

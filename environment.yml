@@ -1,0 +1,14 @@
+name: moduliim
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - numpy
+  - matplotlib
+  - seaborn
+  - cmap
+  - pandas
+  - scipy
+  - ipython
+  - jupyter
+  - tqdm

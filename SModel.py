@@ -118,7 +118,7 @@ class SModel:
             X = np.array([1])
 
         # Evaluate cross section.
-        if 'rdg-fa' in model or 'rayleigh' in model:  # RDG-FA (volumetric), same as Rayleigh save for Npp
+        if 'rdg-fa' in model or 'rayleigh' in model:  # RDG-FA (volumetric), same as Rayleigh except for Npp
             if hasattr(prop, 'm'):
                 Em = ((prop.m**2 - 1) / (prop.m**2 + 2)).imag
             else:
