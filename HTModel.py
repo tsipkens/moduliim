@@ -1,6 +1,6 @@
 import numpy as np
 
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, brentq
 from scipy.integrate import quad
 from scipy.stats import norm
 from scipy.integrate import solve_ivp
@@ -307,8 +307,8 @@ class HTModel:
         elif model == 'continuum':
             q = self.qc_cont(prop, T, dp, prop.Tg)
 
-        elif model in {'transition', 'fuchs'}:
-            q = self.qc_tr(prop, T, dp, prop.Tg)
+        elif model in {'transition', 'fuchs', 'mccoy-cha'}:
+            q = self.qc_tr(prop, T, dp, prop.Tg, model)
 
         # Compute Knudsen number if requested as output.
         Kn = None
@@ -355,11 +355,13 @@ class HTModel:
         """
         def conductivity(T):
             return prop.k(T)
+        
+        T = np.atleast_1d(T)
 
         q = 2 * np.pi * dp * np.array([quad(conductivity, Tg, Ti)[0] for Ti in T])
         return q
     
-    def qc_tr(self, prop, T, dp, Tg):
+    def qc_tr(self, prop, T, dp, Tg, model=None):
         """
         Transition regime conduction by Fuchs method.
 
@@ -372,17 +374,29 @@ class HTModel:
         Returns:
         - q: Rate of conduction [W].
         """
-        q = []
-        T = np.array(T)
-        if T.size == 1:
-            T = np.full_like(dp, T)
         
-        for Ti, dpi in zip(T, dp):
-            def residual(T_delta):
-                return self.qc_fm(prop, Ti, dpi, T_delta)[0] - self.q_cont(prop, T_delta, dpi + 2 * self.get_mfp(prop, T_delta), Tg)
+        if model is None:
+            model = self.opts['cond']
 
-            T_delta = fsolve(residual, [Tg, Ti])[0]
-            q.append(self.qc_fm(prop, Ti, dpi, T_delta))
+        if 'mccoy-cha' in model:
+            # Eq. (32) from Liu et al. (2006).
+            q = 2 * np.pi * dp**2 * prop.k(T) * (T - Tg) / (dp + self.get_mfp(prop, T) * prop.G())
+
+        else:  # transition, fuchs
+            q = []
+            T = np.array(T)
+            if T.size == 1:
+                T = np.full_like(dp, T)
+            
+            for Ti, dpi in zip(T, dp):
+                def residual(T_delta):
+                    d_delta = dpi + 2 * self.get_mfp(prop, T_delta)  # boundary between FM and cont. regimes
+                    return np.log(self.qc_fm(prop, Ti, dpi, T_delta)[0] / self.qc_cont(prop, T_delta, d_delta, Tg))
+
+                eps = 1e-12
+                T_delta = brentq(residual, np.minimum(Tg, Ti) + eps, np.maximum(Tg, Ti) - eps)
+                # T_delta = fsolve(residual, 0.99 * Tg, xtol=1e-12)[0]  # old solver
+                q.append(self.qc_fm(prop, Ti, dpi, T_delta)[0])
 
         q = np.array(q)
         return q
