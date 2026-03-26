@@ -224,7 +224,7 @@ class HTModel:
             dTdt = dTdt - self.q_cond(prop, T, self.dp(mp, T))[0]
 
         # Vaporation model
-        if self.opts.get('val', 'default') != 'none':
+        if self.opts.get('vap', 'default') != 'none':
             dTdt = dTdt - self.q_vap(prop, T, self.dp(mp, T), X)[0]
 
         # Radiative model
