@@ -66,12 +66,15 @@ class SModel:
         return "\n".join(lines)
 
 
-    def inverse(self, J):
+    def inverse(self, J, X=None):
         """
         Use default method to evaluate inverse model, converting incandescence to temperature. 
         """
+        if X is None:  # if no annealing, set to ones of same size as T
+            X = np.array([1])
+
         if self.opts['pyrometry'] == 'ratio':
-            return self.pyrometry_ratio(J[:,:,0], J[:,:,1], Emr=None)[0]  # uses Emr from prop
+            return self.pyrometry_ratio(J[:,:,0], J[:,:,1], X=X)[0]
         else:
             return self.spectral_fit(J)
         
@@ -92,7 +95,7 @@ class SModel:
             mp = np.ones_like(T)  # if no mass, assume unit mass everywhere
 
         mp = np.expand_dims(mp, [2])  # expand for lambda dimension
-        Cabs = self.cabs(dp0, self.lam, prop, self.opts['model'], np.expand_dims(X, [2]))
+        Cabs = self.cabs(dp0, self.lam, prop, self.opts['model'], np.expand_dims(X, 2))
         Ib = self.blackbody(T, self.lam)
 
         return mp * Cabs * Ib
@@ -165,7 +168,7 @@ class SModel:
         return numerator / denominator
     
 
-    def pyrometry_ratio(self, J1, J2, Emr=None, idx=None):
+    def pyrometry_ratio(self, J1, J2, Emr=None, idx=None, X=None):
         """
         Evaluate temperature by two-color pyrometry.
 
@@ -202,7 +205,10 @@ class SModel:
 
         # Handle Emr input
         if Emr is None:
-            Emr = self.prop.Emr(lam[0], lam[1], self.prop.dp0)  # Ratio of Em at two wavelengths
+            if hasattr(self.prop, 'Emr'):  # then use Emr directly (allows for overwriting fo Em)
+                Emr = self.prop.Emr(lam[0], lam[1], self.prop.dp0)  # evaluate function
+            else:  # use Em function at the two wavelengths
+                Emr = self.prop.Em(lam[0], self.prop.dp0, X) / self.prop.Em(lam[1], self.prop.dp0, X)
 
         # Ratio of incandescence
         # Pre-allocation and only evaluate select (avoids error messages)
