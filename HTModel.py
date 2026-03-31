@@ -122,8 +122,8 @@ class HTModel:
         # Starting point exception (allows for gap between the laser pulse and measurements).
         if t[0] > 0.1:  # allows for initial condition at t=0 instead of first entry in time vector
             t = np.concatenate(([0], t))
-            opts_tadd = 1
-        else: opts_tadd = 0
+            add_time_zero = True
+        else: add_time_zero = False
 
         # Define the system of ODEs
         def dydt(t, y):
@@ -158,7 +158,7 @@ class HTModel:
             if self.opts['deMethod'] in ['RK45']:
                 sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='RK45', max_step=(t[1]-t[0]))
 
-            else:
+            if self.opts['deMethod'] in ['BDF']:
                 sol = solve_ivp(dydt, (t[0], t[-1]), yi, t_eval=t, method='BDF', max_step=(t[1]-t[0]))
             
             To = sol.y[:Nd, :]
@@ -195,7 +195,7 @@ class HTModel:
 
         # Post-process results.
         # Remove added time, if necessary.
-        if opts_tadd == 1:
+        if add_time_zero == 1:
             To = To[1:]
             mpo = mpo[1:]
             Xo = Xo[1:]
@@ -470,27 +470,28 @@ class HTModel:
             return q, J, hv, pv
         # ------------------------------------------------------
 
-        dp = np.array(dp) * 1e-9  # Convert dp to meters for SI units
+        dp = np.array(dp) * 1e-9  # convert dp from nm to m
 
         if hasattr(prop, 'gamma'):
             if prop.gamma is None:
                 prop.gamma = props.eq_tolman
 
+        # Handle whether alpham is provided or not.
+        # Default assumes unity when not provided.
         if not hasattr(prop, 'alpham'):
             prop.alpham = None
-            
         if prop.alpham is None:
             alpham = 1
         else:
             alpham = prop.alpham(T)
         
         # Evaluate local copies of vapor properties.
-        hv = prop.hv(T)
-        pv = prop.pv(T, dp, prop.hv, X)
-        mv = prop.mv(T)
+        hv = prop.hv(T)  # latent heat of vaporization [J/kg]
+        pv = prop.pv(T, dp, prop.hv, X)  # vapor pressure [Pa]
+        mv = prop.mv(T)  # molecular mass of vapor [kg]
 
-        cv = np.sqrt(np.maximum(8 * KB * T / (np.pi * mv), 0))  # Molecular speed [m/s], max(,0) prevents warnings
-        nv = alpham * pv / (KB * T)  # Vapor number flux [m^-3]
+        cv = np.sqrt(np.maximum(8 * KB * T / (np.pi * mv), 0))  # molecular speed [m/s], max(,0) prevents warnings
+        nv = alpham * pv / (KB * T)  # vapor number flux [m^-3]
 
         J = mv * nv * cv / 4 * np.pi * dp**2
 
