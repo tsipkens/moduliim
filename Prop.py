@@ -50,9 +50,11 @@ def parse_value(v):
                 return np.array([float(x) for x in v])
             except (ValueError, TypeError):
                 return np.array(v)  # leave as array of strings if cannot convert
+            
         elif isinstance(v, (int, float)):
             return float(v)
-        elif isinstance(v, str):
+        
+        elif isinstance(v, str):  # if specified field is string
             try:
                 return float(v)
             except ValueError:
@@ -263,6 +265,7 @@ class Prop:
         """
         Evaluate the Clausius-Clapeyron equation.
         """
+        # Handle other inputs. Perform calculations if necessary. 
         if not hasattr(self, 'Tref'):
             self.Tref = self.Tb  # then boiling temperature 'Tb' was used
         if not hasattr(self, 'Rs'):
@@ -274,7 +277,7 @@ class Prop:
         if not hasattr(self, 'Ccc'):
             self.Ccc = np.log(self.Pref) + (self.hvb*1e6) / self.Rs / self.Tref
 
-        return np.exp(self.Ccc - self.hvb * 1e6 / self.Rs / T)
+        return np.exp(self.Ccc - self.hvb * 1e6 / self.Rs / T)  # evaluate the CC equation
 
     def eq_kelvin(self, T, dp, hv):
         """
