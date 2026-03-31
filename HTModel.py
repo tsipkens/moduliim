@@ -146,7 +146,12 @@ class HTModel:
                 return np.concatenate([dTdt * 1e-9, dmdt * mass_conv * 1e-9, dXdt * 1e-9])
 
         # Initial state
-        yi = np.concatenate([Ti, mpi, Xi] if self.opts['ann'] != 'none' else [Ti, mpi])
+        if self.opts['ann'] != 'none':
+            yi = np.concatenate([Ti, mpi, Xi])
+        else:
+            yi = np.concatenate([Ti, mpi])
+        # else:  elif self.opts['vap'] != 'none':
+        #     yi = np.concatenate([Ti])
 
         # Solve the ODE
         if self.opts['deMethod'] in ['BDF', 'RK45']:  # specifics of ODE solver call
@@ -320,6 +325,9 @@ class HTModel:
             q = q / Np  # convert back to a per primary rate
 
         return q, Kn
+    
+    def gamma_r(self, prop, T):
+        return (prop.gamma1(T) + 1)/(prop.gamma1(T) - 1)  # builds gamma ratio
 
     def qc_fm(self, prop, T, dp, Tg):
         """
@@ -333,12 +341,17 @@ class HTModel:
 
         Returns:
         - q: Rate of free molecular conduction [W].
+
+        prop.gamma_r is pre-computed when initializing the HTModel class. 
         """
-        ct = (8 * KB * prop.Tg / (PI * prop.mg)) ** (1/2)
-        alpha = np.clip(prop.alpha, 0, 1)
-        q = ((alpha * prop.Pg * ct * np.pi * (dp ** 2) / (8 * Tg)) *
-            prop.gamma2(T) * (T - Tg))
+        ct = np.sqrt(8 * KB * Tg / (np.pi * prop.mg))  # average gas speed
+        q = prop.alpha * prop.Pg * ct * np.pi * dp ** 2 / (8 * Tg) * self.gamma_r(prop, T) * (T - Tg)
         return q, ct
+    
+    def kg_star_DT(self, prop, T, Tg):
+        """Integrate conductivity over temperature range."""
+        T = np.atleast_1d(T)
+        return np.array([quad(prop.k, Tg, Ti)[0] for Ti in T])
 
     def qc_cont(self, prop, T, dp, Tg):
         """
@@ -353,13 +366,7 @@ class HTModel:
         Returns:
         - q: Rate of continuum conduction [W].
         """
-        def conductivity(T):
-            return prop.k(T)
-        
-        T = np.atleast_1d(T)
-
-        q = 2 * np.pi * dp * np.array([quad(conductivity, Tg, Ti)[0] for Ti in T])
-        return q
+        return 2 * np.pi * dp * self.kg_star_DT(prop, T, Tg)
     
     def qc_tr(self, prop, T, dp, Tg, model=None):
         """
@@ -379,8 +386,12 @@ class HTModel:
             model = self.opts['cond']
 
         if 'mccoy-cha' in model:
+            f = (9 * prop.gamma1(Tg) - 5) / 4
+            G = 8 * f / (prop.alpha * (prop.gamma1(Tg) + 1))  # combined, equivalent to G in Michelsen et al. (2015), Eq. (14)
+
             # Eq. (32) from Liu et al. (2006).
-            q = 2 * np.pi * dp**2 * prop.k(T) * (T - Tg) / (dp + self.get_mfp(prop, T) * prop.G())
+            q = 2 * np.pi * dp**2 * self.kg_star_DT(prop, T, Tg) \
+                / (dp + self.get_mfp(prop, Tg, model='mccoy-cha') * G)
 
         else:  # transition, fuchs
             q = []
@@ -391,7 +402,7 @@ class HTModel:
             for Ti, dpi in zip(T, dp):
                 def residual(T_delta):
                     d_delta = dpi + 2 * self.get_mfp(prop, T_delta)  # boundary between FM and cont. regimes
-                    return np.log(self.qc_fm(prop, Ti, dpi, T_delta)[0] / self.qc_cont(prop, T_delta, d_delta, Tg))
+                    return np.log(np.abs(self.qc_fm(prop, Ti, dpi, T_delta)[0] / self.qc_cont(prop, T_delta, d_delta, Tg)))
 
                 eps = 1e-12
                 T_delta = brentq(residual, np.minimum(Tg, Ti) + eps, np.maximum(Tg, Ti) - eps)
@@ -402,7 +413,7 @@ class HTModel:
         return q
 
     @staticmethod
-    def get_mfp(prop, T):
+    def get_mfp(prop, T, model=None):
         """
         Computes the Maxwell mean free path of the gas.
 
@@ -413,13 +424,14 @@ class HTModel:
         Returns:
         - lambda: Maxwell mean free path [m].
         """
-        rho = prop.mg * prop.Pg / (KB * prop.Tg)
+        rho = prop.mg * prop.Pg / (KB * T)
 
-        if hasattr(prop, 'mu'):
-            lambda_mfp = prop.mu(T) / (rho * np.sqrt(2 * KB * prop.Tg / (np.pi * prop.mg)))
+        if model=='mccoy-cha' or not hasattr(prop, 'mu'):  # McCoy and Cha
+            f = (9 * prop.gamma1(T) - 5) / 4
+            lambda_mfp = prop.k(T) / (prop.Pg * f) * (prop.gamma1(T) - 1) * np.sqrt(T * np.pi * prop.mg / (2 * KB))
 
-        else:  # McCoy and Cha
-            lambda_mfp = prop.k(T) / (prop.Pg * prop.f) * (prop.gamma1(T) - 1) / (rho * np.sqrt(2 * KB * prop.Tg / (np.pi * prop.mg)))
+        elif hasattr(prop, 'mu'):
+            lambda_mfp = prop.mu(T) / (rho * np.sqrt(2 * KB * T / (np.pi * prop.mg)))
 
         return lambda_mfp
 
@@ -491,7 +503,10 @@ class HTModel:
         """
         Simple bridging function to just output J.
         """
-        _, J, _, _ = self.q_vap(prop, T, dp, X)
+        if self.opts['vap'] == 'none':
+            J = np.zeros_like(T)
+        else:
+            _, J, _, _ = self.q_vap(prop, T, dp, X)
         return J
 
     def q_rad(self, prop, T, dp):
