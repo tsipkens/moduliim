@@ -1,4 +1,2 @@
 mg: 4.65117e-26
 gamma1: 1.4
-gamma2: '@(T,prop)(prop.gamma1+1)/(prop.gamma1-1)'
-ct: 'lambda self: (8 * KB * self.Tg / (PI * self.mg)) ** (1./2)'

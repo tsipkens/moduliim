@@ -1,7 +1,6 @@
 gas: Ar
 mg: 6.63368e-26
 gamma1: 1.6666666666666667
-gamma2: 'lambda self, T: (self.gamma1+1)/(self.gamma1-1)'
 
 coeffs:
   - [0.5706755, -95.11733, 2089.64, 2.471881]
@@ -10,5 +9,3 @@ coeffs:
   - [0.6427552, 14.11291, -20639.08, 1.64401]
 mu: 'lambda self, T: self.eq_mu(T)'
 k: 'lambda self, T: self.eq_k(T)'
-
-ct: 'lambda self: (8 * KB * self.Tg / (PI * self.mg)) ** (1./2)'

@@ -1,5 +1,14 @@
+gas: 'air'
 mg: 4.8089207e-26 # for air
 gamma1: 'lambda self, T: 7/5' # from N2
-gamma2: 'lambda self, T: (self.gamma1(T) + 1)/(self.gamma1(T) - 1)'
-ct: 'lambda self: (8 * KB * self.Tg / (PI * self.mg)) ** (1./2)'
 mu: 'lambda self, T: 1.79e-5'  # at sea level and 15 C
+
+# Constants from COMSOL: https://doc.comsol.com/6.1/doc/com.comsol.help.cfd/cfd_ug_fluidflow_high_mach.08.33.html#:~:text=Sutherland's%20Law,5
+S: 194  # Sutherland's constant for air
+k0: 0.0241  # thermal conductivity at T0 [W/m-K]
+T0: 273  # reference temperature for k0
+k: 'lambda self, T: self.k0' #* (T / self.T0) ** (3/2) * (self.T0 + self.S) / (T + self.S)'  # Sutherland’s Law
+
+mu0: 1.79e-5  # at sea level and 15 C
+mu: 'lambda self, T: self.mu0' # * (T / self.T0) ** (3/2) * (self.T0 + self.S) / (T + self.S)'
+

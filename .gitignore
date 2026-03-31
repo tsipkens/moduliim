@@ -6,6 +6,7 @@ out/*
 working/*
 data_local/*
 data_out/*
+yaml_local/*
 *temp*
 *.svg
 
